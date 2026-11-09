@@ -28,6 +28,13 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         # Oldest supported and newest available.
         python-version: ["3.9", "3.x"]
+        # Python 3.9 is end-of-life and has no build for the newest Ubuntu.
+        exclude:
+          - os: ubuntu-latest
+            python-version: "3.9"
+        include:
+          - os: ubuntu-24.04
+            python-version: "3.9"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
