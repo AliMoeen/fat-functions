@@ -1,4 +1,4 @@
-"""End-to-end tests: fat_functions.py writes report.json and a summary."""
+"""End-to-end tests: fat_functions.py writes the report and a summary."""
 
 import json
 import os
@@ -15,8 +15,8 @@ SCRIPT = VENDOR.parent / "fat_functions.py"
 
 
 def run(capsys, *args):
-    """Run the tool; return its exit code and stdout."""
-    code = main([str(arg) for arg in args])
+    """Run the tool without opening a browser; return exit code and stdout."""
+    code = main([*(str(arg) for arg in args), "--no-open"])
     return code, capsys.readouterr().out
 
 
@@ -85,17 +85,36 @@ def test_report_json_for_the_mixed_project(tmp_path, capsys):
         "Worst offenders (ranked by lines of code times complexity):",
         "  1. build: 10 lines of code, complexity 5, Simple (billing.py:2)",
     ]
-    assert out.splitlines()[-1] == f"Report: {report_dir / 'report.json'}"
+    assert out.splitlines()[-2:] == [
+        f"Report: {report_dir / 'report.html'}",
+        f"Data: {report_dir / 'report.json'}",
+    ]
 
 
 def test_same_input_gives_the_same_bytes(tmp_path, capsys):
     project = copy_mixed(tmp_path)
+    report_dir = project / ".fat-functions"
     run(capsys, project)
-    first = (project / ".fat-functions" / "report.json").read_bytes()
+    first = [(report_dir / n).read_bytes() for n in ("report.json", "report.html")]
     run(capsys, project)
-    second = (project / ".fat-functions" / "report.json").read_bytes()
+    second = [(report_dir / n).read_bytes() for n in ("report.json", "report.html")]
     assert first == second
-    assert b"\r\n" not in first
+    assert all(b"\r\n" not in content for content in first)
+
+
+def test_opens_the_report_in_the_browser_unless_told_not_to(
+    tmp_path, capsys, monkeypatch
+):
+    opened = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+    project = copy_mixed(tmp_path)
+
+    main([str(project)])
+    main([str(project), "--no-open"])
+    capsys.readouterr()
+
+    html = (project / ".fat-functions" / "report.html").resolve()
+    assert opened == [html.as_uri()]
 
 
 def test_options_and_everything_that_was_not_measured(tmp_path, capsys):
@@ -148,7 +167,7 @@ def test_options_and_everything_that_was_not_measured(tmp_path, capsys):
     )
     assert (
         "Not fully measured: 1 error, 1 warning, 1 generated file skipped; "
-        "see report.json." in out
+        "see the report." in out
     )
 
     run(capsys, project, "--out", out_dir, "--include-generated")
@@ -163,7 +182,7 @@ def test_an_existing_out_folder_gets_no_gitignore(tmp_path, capsys):
     out_dir = tmp_path / "docs"
     out_dir.mkdir()
     run(capsys, project, "--out", out_dir)
-    assert sorted(p.name for p in out_dir.iterdir()) == ["report.json"]
+    assert sorted(p.name for p in out_dir.iterdir()) == ["report.html", "report.json"]
 
 
 def test_a_path_that_is_not_a_folder_is_an_error(tmp_path, capsys):
@@ -178,7 +197,7 @@ def test_names_the_console_cannot_show_do_not_crash(tmp_path):
     (project / "units.py").write_text("def größe():\n    return 1\n", encoding="utf-8")
     env = {**os.environ, "PYTHONIOENCODING": "ascii"}
     result = subprocess.run(
-        [sys.executable, str(SCRIPT), str(project)],
+        [sys.executable, str(SCRIPT), str(project), "--no-open"],
         capture_output=True,
         text=True,
         encoding="ascii",
@@ -195,7 +214,7 @@ def test_runs_without_its_folder_on_sys_path(tmp_path):
     # off sys.path; the script must still find codemap/.
     project = copy_mixed(tmp_path)
     result = subprocess.run(
-        [sys.executable, "-I", str(SCRIPT), str(project)],
+        [sys.executable, "-I", str(SCRIPT), str(project), "--no-open"],
         capture_output=True,
         text=True,
         check=False,

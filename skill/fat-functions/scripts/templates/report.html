@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fat Functions</title>
+<style>
+/* Layout: summary strip and legend, then diagnose (scatter) beside act (ranked list), navigate (treemap)
+   full width, and anything not fully measured. Colors come only from these variables, so the VS Code
+   extension can map them to the editor theme (docs/DESIGN.md section 9). */
+:root{
+  --bg:#f5f6f4; --surface:#ffffff; --line:#e1e4e0; --fg:#1b201d; --muted:#5d655f; --faint:#8a918b;
+  --c-ok:#cfdcd2; --c-watch:#f1d58e; --c-soon:#f0a677; --c-now:#df5c55; --c-module:#eceeea; --c-forgiven:#6a5fb0;
+  --on-fill:#1b201d; --on-now:#ffffff; --zone:rgba(223,92,85,.07); --accent:#2f6b57;
+  --shadow:0 6px 24px rgba(0,0,0,.12);
+  --f-sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --f-mono:ui-monospace,"SF Mono","Cascadia Mono","Segoe UI Mono",Consolas,"Liberation Mono",monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#121614; --surface:#1a1f1c; --line:#2b322e; --fg:#e8ece9; --muted:#a3aca6; --faint:#78817b;
+  --c-ok:#3d5a4b; --c-watch:#8a7430; --c-soon:#a85a35; --c-now:#cf4a45; --c-module:#232926; --c-forgiven:#a99be6;
+  --on-fill:#e8ece9; --on-now:#ffffff; --zone:rgba(207,74,69,.12); --accent:#7cc3a6;
+  --shadow:0 6px 24px rgba(0,0,0,.5); color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --bg:#121614; --surface:#1a1f1c; --line:#2b322e; --fg:#e8ece9; --muted:#a3aca6; --faint:#78817b;
+  --c-ok:#3d5a4b; --c-watch:#8a7430; --c-soon:#a85a35; --c-now:#cf4a45; --c-module:#232926; --c-forgiven:#a99be6;
+  --on-fill:#e8ece9; --on-now:#ffffff; --zone:rgba(207,74,69,.12); --accent:#7cc3a6;
+  --shadow:0 6px 24px rgba(0,0,0,.5); color-scheme:dark;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--f-sans);font-size:14px;line-height:1.5}
+.wrap{max-width:1180px;margin:0 auto;padding-block:28px 48px;padding-inline:max(16px,env(safe-area-inset-left,0px)) max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:20px}
+header h1{font-size:22px;font-weight:600;margin:0;letter-spacing:-.01em;text-wrap:balance;overflow-wrap:anywhere}
+header h1 code{font-family:var(--f-mono);font-weight:500;font-size:20px}
+.sub{color:var(--muted);margin:2px 0 0}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.stat{background:var(--surface);padding:12px 16px}
+.stat .k{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.stat .v{font-family:var(--f-mono);font-size:24px;font-weight:500;font-variant-numeric:tabular-nums}
+.stat .v.alert{color:var(--c-now)}
+.stat .v.forgiven{color:var(--c-forgiven)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;color:var(--muted);font-size:13px}
+.legend b{font-weight:500;color:var(--fg)}
+.sw{display:inline-flex;align-items:center;gap:6px}
+.sw i{width:12px;height:12px;border-radius:3px;display:inline-block}
+.sw i.ring{border-radius:50%;background:var(--c-ok);box-shadow:0 0 0 2px var(--c-forgiven)}
+.sw i.zone{background:var(--zone);box-shadow:inset 0 0 0 1px var(--c-now)}
+.grid2{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:16px;align-items:start}
+@media (max-width:920px){.grid2{grid-template-columns:minmax(0,1fr)}}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
+.ph{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+.step{font-family:var(--f-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
+h2{font-size:16px;font-weight:600;margin:0}
+.panel .sub{font-size:13px;margin:0 0 8px}
+#scatter{width:100%;height:420px}
+#chart{width:100%;height:580px}
+.hint{color:var(--faint);font-size:12px;margin:6px 0 0}
+.empty{color:var(--muted);padding:12px 6px}
+/* Ranked list: numbers never shrink; the path gives way, cut at its start so the file name stays. */
+.off{list-style:none;margin:0;padding:0;max-height:430px;overflow-y:auto}
+.row{display:flex;align-items:stretch;border-top:1px solid var(--line)}
+.row:hover{background:color-mix(in srgb,var(--fg) 4%,transparent)}
+.row.active{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.pick{flex:1;min-width:0;display:grid;grid-template-columns:22px minmax(0,1fr) auto;column-gap:10px;row-gap:1px;align-items:center;padding:9px 4px 9px 6px;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.pick:focus-visible,.go:focus-visible,.gap-item:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.rank{grid-row:1/3;font-family:var(--f-mono);color:var(--faint);font-size:12px}
+.n{grid-column:2;grid-row:1;min-width:0;font-family:var(--f-mono);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chips{grid-column:3;grid-row:1;justify-self:end;display:flex;gap:4px}
+.p{grid-column:2;grid-row:2;min-width:0;color:var(--muted);font-size:12px;font-family:var(--f-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+.nums{grid-column:3;grid-row:2;justify-self:end;color:var(--muted);font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.go{flex:none;width:30px;border:0;background:none;color:var(--faint);font:inherit;font-size:15px;cursor:pointer}
+.go:hover{color:var(--accent)}
+.chip{display:inline-block;font-size:11px;font-weight:500;line-height:1.5;padding:1px 8px;border-radius:999px;white-space:nowrap}
+.chip.ok{background:var(--c-ok);color:var(--on-fill)}
+.chip.watch{background:var(--c-watch);color:var(--on-fill)}
+.chip.soon{background:var(--c-soon);color:var(--on-fill)}
+.chip.now{background:var(--c-now);color:var(--on-now)}
+.chip.forgiven{color:var(--c-forgiven);box-shadow:inset 0 0 0 1px var(--c-forgiven)}
+/* Tooltips are HTML that ECharts puts inside the page, so these rules reach them. */
+.tt-name{font-family:var(--f-mono);font-weight:500;overflow-wrap:anywhere}
+.tt-path{color:var(--muted);font-family:var(--f-mono);font-size:11px;overflow-wrap:anywhere}
+.tt-body{margin-top:6px}
+.tt-chips{margin-top:6px;display:flex;gap:4px}
+.tt-hint{margin-top:6px;color:var(--faint);font-size:11px}
+/* Not fully measured */
+.gaps details{border-top:1px solid var(--line);padding:8px 0}
+.gaps summary{cursor:pointer;font-weight:500}
+.gaps ul{list-style:none;margin:6px 0 0;padding:0;max-height:260px;overflow-y:auto}
+.gaps li{padding:3px 0}
+.gap-item{border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;padding:0}
+.gap-item:hover .gap-file{text-decoration:underline}
+.gap-file{font-family:var(--f-mono);font-size:13px;overflow-wrap:anywhere}
+.gap-why{color:var(--muted);font-size:12px;display:block}
+footer{color:var(--faint);font-size:12px}
+#goto{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);max-width:calc(100% - 32px);background:var(--surface);color:var(--fg);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:8px 14px;font-family:var(--f-mono);font-size:13px;overflow-wrap:anywhere}
+@media (max-width:560px){#chart{height:460px}#scatter{height:340px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Fat Functions · <code id="project"></code></h1>
+    <p class="sub">Find the functions that are too big and too complex, see where they live, and fix the worst first.</p>
+  </header>
+
+  <section class="stats" id="stats" aria-label="Summary"></section>
+
+  <div class="legend" aria-label="Legend">
+    <b>Complexity</b>
+    <span class="sw"><i style="background:var(--c-ok)"></i>1–5 simple</span>
+    <span class="sw"><i style="background:var(--c-watch)"></i>6–10 watch</span>
+    <span class="sw"><i style="background:var(--c-soon)"></i>11–20 split soon</span>
+    <span class="sw"><i style="background:var(--c-now)"></i>21+ split now</span>
+    <span class="sw"><i class="ring"></i>forgiven: marked #lizard forgive</span>
+    <span class="sw"><i class="zone"></i><span id="zone-text"></span></span>
+  </div>
+
+  <div class="grid2">
+    <section class="panel">
+      <div class="ph"><span class="step">Diagnose</span><h2>Size vs complexity</h2></div>
+      <p class="sub">Each dot is a function. The shaded corner holds functions that are both long and complex.</p>
+      <div id="scatter" role="img"></div>
+      <p class="hint">Select a dot to find it in the list and on the map. Double-click to go to its code.</p>
+    </section>
+
+    <section class="panel">
+      <div class="ph"><span class="step">Act</span><h2>Worst offenders</h2></div>
+      <p class="sub">Ranked by lines of code × complexity.</p>
+      <ol class="off" id="off"></ol>
+    </section>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><span class="step">Navigate</span><h2>Where the code lives</h2></div>
+    <p class="sub">Block size is lines of code, color is complexity. Click a folder or file to zoom in.</p>
+    <div id="chart" role="img"></div>
+    <p class="hint">Hover any block for details, double-click a function to go to its code, and use the path bar at the bottom to zoom back out.</p>
+  </section>
+
+  <section class="panel gaps" id="gaps" hidden>
+    <div class="ph"><span class="step">Check</span><h2>Not fully measured</h2></div>
+    <p class="sub">Left out of the numbers above, or only partly measured. Nothing is dropped silently.</p>
+    <div id="gap-lists"></div>
+  </section>
+
+  <footer>Lines of code leave out blank lines, comments and docstrings. Complexity is cyclomatic complexity, measured by lizard. Made with Fat Functions.</footer>
+</div>
+<div id="goto" role="status" aria-live="polite" hidden></div>
+
+<script type="application/json" id="report-data">/*{{DATA}}*/</script>
+<script>/*{{ECHARTS}}*/</script>
+<script>
+"use strict";
+const PAGE = JSON.parse(document.getElementById("report-data").textContent);
+const REPORT = PAGE.report;
+const LIMITS = REPORT.thresholds;
+const LABEL = {ok: "Simple", watch: "Watch", soon: "Split soon", now: "Split now"};
+const NAMED_DOTS = 8;  // worst offenders labelled by name on the scatter plot
+
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[c]);
+const fmt = n => Number(n).toLocaleString("en-US");
+const plural = (n, word) => `${fmt(n)} ${word}${n === 1 ? "" : "s"}`;
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const shortName = name => name.split(/::|\./).filter(Boolean).pop() || name;
+
+// Every "go to this function" action calls this one function. In a browser it shows the place and
+// copies it for the editor's Go to File; the VS Code extension defines its own to open the editor.
+if (typeof window.openFunction !== "function") {
+  window.openFunction = function (file, line) {
+    const where = `${file}:${line}`;
+    const bar = document.getElementById("goto");
+    bar.textContent = `Go to ${where}`;
+    bar.hidden = false;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(where).then(
+        () => { bar.textContent = `Copied ${where}: paste it into your editor's Go to File.`; },
+        () => {});
+    }
+    clearTimeout(bar.timer);
+    bar.timer = setTimeout(() => { bar.hidden = true; }, 6000);
+  };
+}
+const goTo = f => window.openFunction(f.file, f.start_line);
+
+// Functions come from the tree, where each sits under its file. Each file also gets the worst
+// status among its functions, which tints it on the map when it is too small to show them.
+const STATUS_ORDER = ["ok", "watch", "soon", "now"];
+const functions = [];
+(function walk(node, file) {
+  if (node.type === "file") file = node.path;
+  if (node.type === "function") functions.push(Object.assign({}, node, {file, idx: functions.length}));
+  let count = node.type === "function" ? 1 : 0, worst = node.type === "function" ? node.status : "ok";
+  for (const child of node.children || []) {
+    const [childCount, childWorst] = walk(child, file);
+    count += childCount;
+    if (STATUS_ORDER.indexOf(childWorst) > STATUS_ORDER.indexOf(worst)) worst = childWorst;
+  }
+  node.functionCount = count;
+  node.worst = worst;
+  return [count, worst];
+})(REPORT.tree, "");
+const byId = new Map(functions.map(f => [f.id, f]));
+const offenders = REPORT.offenders;
+// Scatter order: worst offenders first, so when names overlap theirs are the ones kept.
+const rankOf = new Map(offenders.map((o, i) => [o.id, i]));
+const dots = functions.slice().sort((a, b) =>
+  (rankOf.has(a.id) ? rankOf.get(a.id) : Infinity) - (rankOf.has(b.id) ? rankOf.get(b.id) : Infinity) || a.idx - b.idx);
+dots.forEach((f, i) => { f.dot = i; });
+
+// Header, summary and legend
+document.title = `Fat Functions · ${PAGE.project}`;
+document.getElementById("project").textContent = PAGE.project;
+document.getElementById("zone-text").textContent =
+  `danger zone: more than ${fmt(LIMITS.max_loc)} lines of code and complexity over ${fmt(LIMITS.max_complexity)}`;
+(function stats() {
+  const s = REPORT.summary;
+  const forgiven = functions.filter(f => f.forgiven).length;
+  const average = functions.length
+    ? (functions.reduce((sum, f) => sum + f.complexity, 0) / functions.length).toFixed(1) : "–";
+  const items = [
+    ["Lines of code", fmt(s.loc), ""], ["Files", fmt(s.files), ""], ["Functions", fmt(s.functions), ""],
+    ["Average complexity", average, ""], ["In danger zone", fmt(s.danger_zone), s.danger_zone ? "alert" : ""]];
+  if (forgiven) items.push(["Forgiven", fmt(forgiven), "forgiven"]);
+  document.getElementById("stats").innerHTML = items.map(([k, v, c]) =>
+    `<div class="stat"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`).join("");
+})();
+document.getElementById("scatter").setAttribute("aria-label",
+  `Scatter plot of ${plural(functions.length, "function")}: lines of code across, complexity up, ` +
+  `with a shaded danger zone above ${LIMITS.max_loc} lines of code and complexity ${LIMITS.max_complexity}`);
+document.getElementById("chart").setAttribute("aria-label",
+  `Treemap of ${PAGE.project}: folders, files and functions sized by lines of code and colored by complexity`);
+
+function palette() {
+  return {
+    C: {ok: color("--c-ok"), watch: color("--c-watch"), soon: color("--c-soon"), now: color("--c-now")},
+    module: color("--c-module"), forgiven: color("--c-forgiven"), surface: color("--surface"),
+    line: color("--line"), fg: color("--fg"), muted: color("--muted"), faint: color("--faint"),
+    onFill: color("--on-fill"), onNow: color("--on-now"), zone: color("--zone"),
+    sans: css("--f-sans"), mono: css("--f-mono")};
+}
+// Colors are read as the browser computes them, so a variable that points at another variable
+// (as the VS Code extension's theme mapping will) still gives the charts a color they can paint.
+const probe = document.body.appendChild(Object.assign(document.createElement("i"), {hidden: true}));
+function color(name) {
+  probe.style.color = `var(${name})`;
+  return getComputedStyle(probe).color;
+}
+// `share` of color a over color b, both as the browser computes them ("rgb(...)" or "rgba(...)").
+function mix(a, b, share) {
+  const [ra, rb] = [a, b].map(c => (c.match(/[\d.]+/g) || []).map(Number));
+  if (ra.length < 3 || rb.length < 3) return b;
+  return `rgb(${[0, 1, 2].map(i => Math.round(ra[i] * share + rb[i] * (1 - share))).join(",")})`;
+}
+const onColor = (P, status) => status === "now" ? P.onNow : P.onFill;
+const chip = status => `<span class="chip ${status}">${LABEL[status]}</span>`;
+const forgivenChip = `<span class="chip forgiven">Forgiven</span>`;
+const tipBox = P => ({
+  backgroundColor: P.surface, borderColor: P.line, borderWidth: 1, padding: [10, 12], confine: true,
+  textStyle: {color: P.fg, fontFamily: P.sans, fontSize: 12},
+  extraCssText: "box-shadow:var(--shadow);border-radius:8px;max-width:360px;white-space:normal;"});
+
+function functionTip(f) {
+  return `<div class="tt-name">${esc(f.name)}</div>
+    <div class="tt-path">${esc(f.file)}:${f.start_line}</div>
+    <div class="tt-body">${plural(f.loc, "line")} of code (lines ${f.start_line}–${f.end_line})<br>
+      complexity <b>${f.complexity}</b> · ${plural(f.params, "parameter")}</div>
+    <div class="tt-chips">${chip(f.status)}${f.forgiven ? forgivenChip : ""}</div>
+    <div class="tt-hint">Double-click to go to its code.</div>`;
+}
+
+// Treemap ------------------------------------------------------------------------------------------
+const measure = document.createElement("canvas").getContext("2d");
+function textWidth(text, font) { measure.font = font; return measure.measureText(text).width; }
+function blockWidth(dataIndex) {
+  try { return tm.getModel().getSeriesByIndex(0).getData().getItemLayout(dataIndex).width; }
+  catch (e) { return 0; }
+}
+// A header shows its total only when name and total both fit: the total goes before the name is cut.
+function headerText(p, P) {
+  const total = `${fmt(p.value)} loc`;
+  const font = p.data.kind === "folder" ? `600 12px ${P.sans}` : `500 11px ${P.mono}`;
+  const fits = textWidth(`${p.name}   ${total}`, font) + 22 <= blockWidth(p.dataIndex);
+  return fits ? `${p.name}   {s|${total}}` : p.name;
+}
+
+function treemapData(P) {
+  const convert = (node, file) => {
+    if (node.type === "function") {
+      const f = byId.get(node.id);
+      return {
+        id: f.id, name: f.name, value: node.value, kind: "function",
+        itemStyle: {color: P.C[f.status], borderColor: f.forgiven ? P.forgiven : P.surface,
+          borderWidth: f.forgiven ? 2 : 1, borderRadius: 3},
+        label: {color: onColor(P, f.status)}};
+    }
+    if (node.type === "module") {
+      return {id: `${file}::<module>`, name: node.name, value: node.value, kind: "module", file,
+        itemStyle: {color: P.module, borderColor: P.surface, borderWidth: 1, borderRadius: 3},
+        label: {color: P.muted}};
+    }
+    const folder = node.type === "folder";
+    const path = node.type === "file" ? node.path : file;
+    const fileColor = node.worst === "ok" ? P.surface : mix(P.C[node.worst], P.surface, 0.3);
+    return {
+      id: node.path, name: folder ? `${node.name}/` : node.name, value: node.value, kind: node.type,
+      path: node.path, functionCount: node.functionCount,
+      itemStyle: folder
+        ? {color: P.line, borderColor: P.line, borderWidth: 3, gapWidth: 3, borderRadius: 8}
+        : {color: fileColor, borderColor: fileColor, borderWidth: 2, gapWidth: 1, borderRadius: 6},
+      upperLabel: folder
+        ? {height: 24, fontFamily: P.sans, fontWeight: 600, fontSize: 12}
+        : {height: 20, fontFamily: P.mono, fontWeight: 500, fontSize: 11},
+      children: node.children.map(child => convert(child, path))};
+  };
+  return REPORT.tree.children.map(child => convert(child, ""));
+}
+
+function treemapOption(P) {
+  return {
+    animationDurationUpdate: 450,
+    tooltip: {...tipBox(P), formatter: p => {
+      const d = p.data;
+      if (!d) return "";
+      if (d.kind === "function") return functionTip(byId.get(d.id));
+      if (d.kind === "module") {
+        return `<div class="tt-name">Module-level code</div><div class="tt-path">${esc(d.file)}</div>
+          <div class="tt-body">${plural(d.value, "line")} of code outside any function</div>`;
+      }
+      return `<div class="tt-name">${esc(d.path)}${d.kind === "folder" ? "/" : ""}</div>
+        <div class="tt-body">${plural(d.value, "line")} of code · ${plural(d.functionCount, "function")}</div>`;
+    }},
+    series: [{
+      type: "treemap", name: PAGE.project, data: treemapData(P),
+      top: 4, left: 0, right: 0, bottom: 44, roam: false, nodeClick: false, squareRatio: 1.2,
+      visibleMin: 30, childrenVisibleMin: 1600,
+      breadcrumb: {show: true, bottom: 6, left: 0, height: 26, emptyItemWidth: 24,
+        itemStyle: {color: P.surface, borderColor: P.line, borderWidth: 1, shadowBlur: 0,
+          textStyle: {color: P.fg, fontFamily: P.sans}},
+        emphasis: {itemStyle: {color: P.line, textStyle: {color: P.fg}}}},
+      label: {show: true, position: "insideTopLeft", fontFamily: P.mono, fontSize: 11, padding: [5, 6],
+        overflow: "truncate", ellipsis: "…",
+        formatter: p => {
+          const d = p.data;
+          if (d.kind === "module") return `${p.name}\n{n|${fmt(p.value)} loc}`;
+          if (d.kind !== "function") return p.name;
+          const f = byId.get(d.id);
+          return `${shortName(f.name)}\n{n|${fmt(f.loc)} loc${f.forgiven ? " · forgiven" : ""}}`;
+        },
+        rich: {n: {fontSize: 10, opacity: .8, fontFamily: P.mono, padding: [2, 0, 0, 0]}}},
+      upperLabel: {show: true, color: P.fg, padding: [0, 8], overflow: "truncate", ellipsis: "…",
+        formatter: p => headerText(p, P),
+        rich: {s: {color: P.muted, fontWeight: 400, fontSize: 11, fontFamily: P.mono}}},
+      itemStyle: {gapWidth: 6, borderWidth: 0},
+      emphasis: {itemStyle: {borderColor: P.fg}}
+    }]
+  };
+}
+
+// Scatter ------------------------------------------------------------------------------------------
+function niceCeil(value) {
+  const step = 10 ** Math.floor(Math.log10(Math.max(value, 1)));
+  return Math.ceil(value / step * 2) / 2 * step;
+}
+
+function scatterOption(P) {
+  let maxLoc = LIMITS.max_loc * 1.2, maxComplexity = LIMITS.max_complexity * 1.2;
+  for (const f of functions) {
+    maxLoc = Math.max(maxLoc, f.loc);
+    maxComplexity = Math.max(maxComplexity, f.complexity);
+  }
+  const maxX = niceCeil(maxLoc * 1.06), maxY = niceCeil(maxComplexity * 1.08);
+  const named = new Set(offenders.slice(0, NAMED_DOTS).map(o => o.id));
+  const axis = name => ({name, nameLocation: "middle", nameGap: 30,
+    nameTextStyle: {color: P.muted, fontFamily: P.sans, fontSize: 12},
+    axisLine: {lineStyle: {color: P.line}}, axisTick: {show: false},
+    axisLabel: {color: P.faint, fontFamily: P.mono, fontSize: 11},
+    splitLine: {lineStyle: {color: P.line, type: [3, 4]}}});
+  const data = dots.map(f => {
+    const item = {value: [f.loc, f.complexity], id: f.id,
+      symbolSize: Math.max(7, Math.min(20, Math.sqrt(f.loc) * 1.4)),
+      itemStyle: {color: P.C[f.status], borderColor: f.forgiven ? P.forgiven : P.surface,
+        borderWidth: f.forgiven ? 2.5 : 1, opacity: f.status === "ok" && !f.forgiven ? .85 : 1}};
+    if (named.has(f.id)) {
+      // Names of dots near the right edge go on their left, so they are never cut off.
+      item.label = {show: true, position: f.loc > maxX * 0.7 ? "left" : "right"};
+    }
+    return item;
+  });
+  return {
+    animationDurationUpdate: 300,
+    grid: {left: 46, right: 18, top: 16, bottom: 44},
+    tooltip: {...tipBox(P), trigger: "item", formatter: p => functionTip(byId.get(p.data.id))},
+    xAxis: {...axis("Lines of code"), type: "value", min: 0, max: maxX},
+    yAxis: {...axis("Complexity"), type: "value", min: 0, max: maxY, nameGap: 32},
+    series: [{
+      type: "scatter", data, progressive: 0,
+      label: {show: false, distance: 6, color: P.fg, fontFamily: P.mono, fontSize: 11,
+        formatter: p => {
+          const f = byId.get(p.data.id);
+          return shortName(f.name) + (f.forgiven ? " (forgiven)" : "");
+        }},
+      labelLayout: {hideOverlap: true},
+      emphasis: {scale: 1.5, itemStyle: {borderColor: P.fg, borderWidth: 2}, label: {show: true}},
+      markArea: {silent: true, itemStyle: {color: P.zone},
+        label: {show: true, position: "insideTopRight", color: P.C.now, fontFamily: P.sans,
+          fontWeight: 500, fontSize: 12, formatter: "Split these"},
+        data: [[{coord: [LIMITS.max_loc, LIMITS.max_complexity]}, {coord: [maxX, maxY]}]]},
+      markLine: {silent: true, symbol: "none", lineStyle: {color: P.faint, type: [4, 4], width: 1},
+        label: {show: false}, data: [{xAxis: LIMITS.max_loc}, {yAxis: LIMITS.max_complexity}]}
+    }]
+  };
+}
+
+// Ranked list --------------------------------------------------------------------------------------
+function renderOffenders() {
+  const list = document.getElementById("off");
+  if (!offenders.length) {
+    list.innerHTML = `<li class="empty">No functions found.</li>`;
+    return;
+  }
+  list.innerHTML = offenders.map((f, i) => `
+    <li class="row" data-id="${esc(f.id)}">
+      <button class="pick" type="button" aria-pressed="false">
+        <span class="rank">${String(i + 1).padStart(2, "0")}</span>
+        <span class="n">${esc(f.name)}</span>
+        <span class="chips">${chip(f.status)}${f.forgiven ? forgivenChip : ""}</span>
+        <span class="p" title="${esc(f.file)}:${f.start_line}"><bdi>${esc(f.file)}:${f.start_line}</bdi></span>
+        <span class="nums">${plural(f.loc, "line")} of code · complexity ${f.complexity}</span>
+      </button>
+      <button class="go" type="button" title="Go to ${esc(f.file)}:${f.start_line}"
+        aria-label="Go to ${esc(f.name)} in ${esc(f.file)}, line ${f.start_line}">↗</button>
+    </li>`).join("");
+}
+
+// Not fully measured -------------------------------------------------------------------------------
+function renderGaps() {
+  const groups = [
+    [REPORT.warnings, "partly measured", w => [w.file, w.line, w.warning]],
+    [REPORT.skipped_generated, "generated, skipped", g => [g.file, 1, `the header says "${g.marker}"`]],
+    [REPORT.errors, "could not be measured", e => [e.file, null, e.error]]];
+  const html = groups.filter(([items]) => items.length).map(([items, what, describe]) => {
+    const rows = items.map(item => {
+      const [file, line, why] = describe(item);
+      const place = line ? `${esc(file)}:${line}` : esc(file);
+      const body = `<span class="gap-file">${place}</span><span class="gap-why">${esc(why)}</span>`;
+      return line
+        ? `<li><button class="gap-item" type="button" data-file="${esc(file)}" data-line="${line}">${body}</button></li>`
+        : `<li>${body}</li>`;
+    }).join("");
+    return `<details${items.length <= 20 ? " open" : ""}><summary>${fmt(items.length)} ${what}</summary><ul>${rows}</ul></details>`;
+  }).join("");
+  if (!html) return;
+  document.getElementById("gap-lists").innerHTML = html;
+  document.getElementById("gaps").hidden = false;
+}
+
+// Linked selection ---------------------------------------------------------------------------------
+const tm = echarts.init(document.getElementById("chart"));
+const sc = echarts.init(document.getElementById("scatter"));
+let selected = null;
+
+function select(id, from) {
+  const f = byId.get(id);
+  if (!f) return;
+  selected = id;
+  for (const row of document.querySelectorAll("#off .row")) {
+    const on = row.dataset.id === id;
+    row.classList.toggle("active", on);
+    row.querySelector(".pick").setAttribute("aria-pressed", String(on));
+    if (on && from !== "list") row.scrollIntoView({block: "nearest"});
+  }
+  sc.dispatchAction({type: "downplay", seriesIndex: 0});
+  sc.dispatchAction({type: "highlight", seriesIndex: 0, dataIndex: f.dot});
+  if (from !== "scatter") sc.dispatchAction({type: "showTip", seriesIndex: 0, dataIndex: f.dot});
+  if (from !== "treemap") showOnMap(f.file);
+}
+// Make a folder or file the map's root, as the path bar does, so the path bar follows.
+function showOnMap(id) {
+  tm.dispatchAction({type: "treemapRootToNode", seriesIndex: 0, targetNodeId: id});
+}
+
+sc.on("click", p => { if (p.componentType === "series") select(p.data.id, "scatter"); });
+sc.on("dblclick", p => { if (p.componentType === "series") goTo(byId.get(p.data.id)); });
+tm.on("click", p => {
+  const d = p.data;
+  if (!d) return;
+  if (d.kind === "function") select(d.id, "treemap");
+  else if (d.kind === "folder" || d.kind === "file") showOnMap(d.id);
+});
+tm.on("dblclick", p => { if (p.data && p.data.kind === "function") goTo(byId.get(p.data.id)); });
+document.getElementById("off").addEventListener("click", e => {
+  const row = e.target.closest(".row");
+  if (!row) return;
+  if (e.target.closest(".go")) goTo(byId.get(row.dataset.id));
+  else select(row.dataset.id, "list");
+});
+document.getElementById("off").addEventListener("dblclick", e => {
+  const row = e.target.closest(".row");
+  if (row && !e.target.closest(".go")) goTo(byId.get(row.dataset.id));
+});
+document.getElementById("gap-lists").addEventListener("click", e => {
+  const item = e.target.closest(".gap-item");
+  if (item) window.openFunction(item.dataset.file, Number(item.dataset.line));
+});
+
+function draw() {
+  const P = palette();
+  // Redrawing (a theme change) rebuilds the map; keep the folder or file it was showing.
+  let shown = null;
+  try {
+    const series = tm.getModel().getSeriesByIndex(0);
+    const viewRoot = series.getViewRoot();
+    if (viewRoot !== series.getData().tree.root) shown = viewRoot.getId();
+  } catch (e) {}
+  tm.setOption(treemapOption(P), true);
+  sc.setOption(scatterOption(P), true);
+  if (shown) showOnMap(shown);
+  if (selected) sc.dispatchAction({type: "highlight", seriesIndex: 0, dataIndex: byId.get(selected).dot});
+}
+renderOffenders();
+renderGaps();
+draw();
+try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw); } catch (e) {}
+new MutationObserver(draw).observe(document.documentElement, {attributes: true, attributeFilter: ["data-theme"]});
+window.addEventListener("resize", () => { tm.resize(); sc.resize(); });
+</script>
+</body>
+</html>

@@ -1,13 +1,15 @@
 """Fat Functions: find the functions worth splitting, as a map of the code.
 
-Usage: python fat_functions.py [path] [options]. Writes report.json into
-<path>/.fat-functions/ and prints a short summary. See docs/DESIGN.md.
+Usage: python fat_functions.py [path] [options]. Writes report.html and
+report.json into <path>/.fat-functions/, prints a short summary and opens the
+report in the browser. See docs/DESIGN.md.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+import webbrowser
 from pathlib import Path
 
 # Find codemap/ next to this script even when Python leaves the script's folder
@@ -39,8 +41,10 @@ def main(argv: list[str] | None = None) -> int:
     scores = score(functions, thresholds)
     tree = build_tree(measured.files)
     report = build_report(measured, scanned.errors, scores, thresholds, tree)
-    report_path = write_report(report, out_dir)
-    print(summary_text(report, report_path))
+    html_path, json_path = write_report(report, out_dir, root.name)
+    print(summary_text(report, html_path, json_path))
+    if not args.no_open:
+        webbrowser.open(html_path.resolve().as_uri())
     return 0
 
 
@@ -78,6 +82,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--include-generated",
         action="store_true",
         help="measure generated files instead of skipping them",
+    )
+    parser.add_argument(
+        "--no-open",
+        action="store_true",
+        help="do not open the report in the browser",
     )
     return parser.parse_args(argv)
 

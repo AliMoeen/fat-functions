@@ -126,7 +126,7 @@ Not yet verified: Windows paths, speed on very large repositories, behaviour whe
 | `measure.py` | Read each file once, then decide by content. Files whose first 10 lines say they were generated are skipped and listed (unless `--include-generated`); the rest are run through lizard and converted to records. Files it cannot read, file types lizard does not know, and lizard failures go in an `errors` list, and the run keeps going; never crash on one bad file. Things that limit what could be measured in a file go in `warnings`. |
 | `tree.py` | Build folder → file → function, rolling sizes up so each parent equals the sum of its children. Code at module level that is not in any function becomes a `<module>` block (like WinDirStat's `<Files>`). Nested functions are separate records, and the line that starts a nested function counts in both (outer 5 + inner 3 lines of code in a 7-line file). `tree.py` lists nested functions next to the outer one in their file and has the outer one give up the start lines of the functions directly inside it (5 − 1 = 4, and 4 + 3 = 7). Checked in build step 5 on two levels of nesting, callbacks and two functions starting on one line: the blocks add up exactly to the file's lines of code. |
 | `score.py` | Assign a status to each function, count the danger zone, rank the worst offenders (section 7). |
-| `render.py` | Write `report.json` and the HTML report, and print a short summary to stdout. Build step 5 wrote `report.json` and the summary; build step 6 adds the HTML. |
+| `render.py` | Write `report.html` and `report.json`, and print a short summary to stdout. Build step 5 wrote `report.json` and the summary; build step 6 added the HTML (section 9). |
 
 `scan.py` follows `.gitignore` files with git's pattern rules (via pathspec), each one for its own folder and below, with two simplifications: a `!pattern` only re-includes what its own file excluded, not what a parent folder's file excluded, and `.git/info/exclude` and the user's global git excludes are not read. All path matching is case-sensitive on every OS, so the same folder gives the same files on Windows, macOS and Linux.
 
@@ -203,7 +203,7 @@ Written into the analyzed project, in `.fat-functions/` (never into the tool's o
 - `warnings` (added in build step 4): a file was measured, but something at that line limits what could be measured, so nothing is lost silently. Today the only one is a `GENERATED CODE` comment past the header (section 4).
 - `skipped_generated` (added in build step 4): every file left out because its header says it was generated, with the text that matched, not just a count, so a wrong guess is easy to spot.
 
-The file is UTF-8 JSON with `\n` line endings and no timestamps or absolute paths, so the same project gives the same bytes on every OS and Python version (checked in build step 5 on 3.9, 3.11 and 3.12). A report folder the tool creates gets a `.gitignore` containing `*`, so reports stay out of git, as pytest and ruff do with their caches; a folder that already existed (`--out docs/`) is left alone. Size: about 5 MB for 13,000 functions (the dev environment's `site-packages`); watch this when the HTML embeds the data (build step 6).
+The file is UTF-8 JSON with `\n` line endings and no timestamps or absolute paths, so the same project gives the same bytes on every OS and Python version (checked in build step 5 on 3.9, 3.11 and 3.12). A report folder the tool creates gets a `.gitignore` containing `*`, so reports stay out of git, as pytest and ruff do with their caches; a folder that already existed (`--out docs/`) is left alone. Size: about 5 MB for 13,000 functions (the dev environment's `site-packages`). `report.html` embeds the same data without indentation (about 3 MB) plus ECharts (about 1 MB), and is the same bytes on every run too (checked on 3.9 and 3.11 in build step 6).
 
 stdout: a few lines with totals, the danger zone and the top 5 offenders, so Copilot often does not need to open the JSON, and the number of errors, warnings and skipped generated files when there are any. For example:
 
@@ -212,7 +212,8 @@ Fat Functions: 5 files, 7 functions, 44 lines of code.
 Danger zone (more than 50 lines of code and complexity over 10): 0 functions.
 Worst offenders (ranked by lines of code times complexity):
   1. build: 10 lines of code, complexity 5, Simple (billing.py:2)
-Report: /path/to/project/.fat-functions/report.json
+Report: /path/to/project/.fat-functions/report.html
+Data: /path/to/project/.fat-functions/report.json
 ```
 
 Only names from the code can be non-ASCII: the tool's own words avoid `·` and `×`, because whoever reads the output (a terminal, Copilot) may decode it with a different code page than Python wrote it in, as PowerShell did in build step 5. Characters the console cannot show are replaced instead of crashing the run.
@@ -229,39 +230,41 @@ python fat_functions.py [path] --out .fat-functions/ --exclude tests migrations
 - `--exclude` takes `.gitignore`-style patterns relative to the analyzed root: `tests` skips every file or folder named `tests`, `src/old/` one folder.
 - `--max-loc` and `--max-complexity` set the danger zone (section 7).
 - `--include-generated` measures generated files instead of skipping them (added in build step 4).
-- `--no-open` comes with the HTML report in build step 6; the other options work since build step 5.
+- `--no-open` skips opening `report.html` in the default browser, which otherwise happens after every run (added in build step 6). Copilot and other tools should always pass it.
 
 ## 9. The report page
 
-A working prototype is in `docs/report-prototype.html`. It becomes `scripts/templates/report.html`, with the hard-coded sample data replaced by a placeholder that `render.py` fills with the real data.
+A working prototype is in `docs/report-prototype.html`. Build step 6 turned it into `scripts/templates/report.html`. `render.py` fills its two slots in one pass: the data, which is the `report.json` content plus the project folder's name, and `vendor/echarts.min.js`. The page builds everything from the data, so the page and `report.json` share one format. Every `<` in the data is written as `\u003c`, so no name from the analyzed code can end the data block early; the page escapes every name, path and message it puts into HTML. Both were checked in a browser with a function, file and warning named `<img src=x onerror=…></script><script>…`: nothing ran. About 1 MB of the page is ECharts; the data adds about 3 MB for 13,000 functions, which loaded in 1.5 s.
 
 Three linked views, each with one job:
 
 1. **Diagnose — scatter plot.** Each dot is a function; lines of code across, complexity up. Shaded top-right danger zone labelled "Split these", dashed lines at the thresholds, worst offenders labelled by name. This answers the core question most directly, because position is judged more precisely than color.
 2. **Act — ranked list** of worst offenders with a status chip.
-3. **Navigate — treemap.** Folder → file → function, block size = lines of code, color = complexity. Click to zoom; path bar to zoom out.
+3. **Navigate — treemap.** Folder → file → function, block size = lines of code, color = complexity. Click a folder or file to zoom in; path bar to zoom out. Each file is tinted with a light (30%) shade of its worst function's status (added in build step 6): in a large project most files are too small to show their functions, and without the tint the overview was a sea of blank blocks, with the color, the point of the map, gone.
 
-Selecting a function in any view highlights it in the other two (dot highlighted, row highlighted, treemap zooms to its file).
+Selecting a function in any view highlights it in the other two (dot highlighted, row highlighted, treemap zooms to its file). Zooming makes the folder or file the map's root (ECharts' `treemapRootToNode`, as the path bar does), so the path bar follows; a redraw for a theme change keeps the folder or file that was showing.
 
 Forgiven functions (section 6) stay in all three views, with a "Forgiven" label on their dot, row and block, and in the tooltip. Warnings and skipped generated files (section 8) are listed on the page too, with file and line, so nothing the tool left out is hidden from the reader.
+
+"Go to this function" is a double-click on a dot, row or block, the ↗ button on a row, or a click on a warning or skipped file; all of them call `openFunction(file, line)` (see below).
 
 Visual rules (these are what make it look polished, unlike the classic D3 Flare treemap):
 
 - Calm neutral blocks; color reserved for complexity, with red only for real problems.
 - Labels only where they fit; details on hover.
 - Clear folder and file headers with totals; gaps and soft corners between blocks instead of thin lines.
-- Real units everywhere ("187 lines of code · complexity 34"), never bare numbers. Where there is room (tooltips, details), show the span too: "187 lines of code (lines 42–253)", so a function that is long mostly because of comments is easy to spot. Keep the span out of the ranked-list rows, where numbers must never be cut off.
+- Real units everywhere ("187 lines of code · complexity 34"), never bare numbers. Where there is room (tooltips, details), show the span too: "187 lines of code (lines 42–253)", so a function that is long mostly because of comments is easy to spot. Keep the span out of the ranked-list rows, where numbers must never be cut off. Inside treemap blocks and headers, where space is tightest, "loc" stands for lines of code.
 - Light and dark mode.
 
-Library: **ECharts 5.5.0**. Chosen over D3 (more polish possible, but zoom, breadcrumbs and transitions must be hand-built) and Plotly (large and dated-looking). ECharts gives built-in drill-down, breadcrumbs, tooltips and good defaults for little code.
+Library: **ECharts 5.5.0**. Chosen over D3 (more polish possible, but zoom, breadcrumbs and transitions must be hand-built) and Plotly (large and dated-looking). ECharts gives built-in drill-down, breadcrumbs, tooltips and good defaults for little code. The prototype's web fonts (IBM Plex from Google Fonts) are replaced by system font stacks, so the page needs no network.
 
-Known issues in the prototype to fix when turning it into the template (seen in dark mode at desktop width):
+Known issues in the prototype, and how build step 6 handled them (checked in a browser on the fixtures and on the 13,000 functions of the dev environment's `site-packages`):
 
-- Scatter labels collide when dots are close (`main`/`build`, `InvoiceTable`/`render_pdf`, `submitOrder`/`apply_discounts`).
-- The label of the right-most dot (`calculate_invoice`) is cut off at the chart edge.
-- Ranked list rows truncate the numbers ("144 …", "cc …") on long paths. Numbers must never be the truncated part; truncate the path instead.
-- Small top-level folders in the treemap (`utils/`, `models/customer.py`) shrink to unreadable slivers. Consider a minimum size or an "other" group.
-- File headers get cut ("InvoiceTable.tsx 1"): drop the loc count before cutting the name.
+- Scatter labels collided when dots were close. Only the 8 worst offenders are named, overlapping names are hidden (ECharts `hideOverlap`), and the worst offenders come first in the data, because with equal dot sizes ECharts keeps the earlier name.
+- The label of the right-most dot was cut off at the chart edge. Names of dots in the right 30% of the chart go on their left.
+- Ranked list rows truncated the numbers. Each row now has the name and status on one line and the path and numbers on the next; the numbers never shrink, and the path is cut at its start (`…/rich/pretty.py:621`), so the file name and line stay. The full path is in the row's tooltip, which matters when two copies of a library give the same ending.
+- Small top-level folders shrank to slivers. No minimum size or "other" group: both would misstate sizes. Instead, blocks too small to read hide their children (ECharts `childrenVisibleMin`) and show their tint, tiny ones are not drawn, and their names are in the tooltip and one click away.
+- File headers got cut ("InvoiceTable.tsx 1"). A header shows its total only when the name and total both fit, measured against the block's width, so the total goes before the name is cut.
 
 Later ideas: treemap/sunburst switch, color-by toggle (complexity, git churn, coverage), search box, `vscode://file/...:line` links.
 
@@ -272,12 +275,19 @@ Build the report so the extension can reuse it unchanged:
 
 - **Self-contained page.** All data and scripts are inside the HTML. No
   outside files, fonts from the web or network requests at runtime.
+  `tests/test_render.py` checks there is no `src`, `href` or `<link>`.
 - **One click handler.** Every "go to this function" action calls a single
-  `openFunction(file, line)` in the page. In a browser it shows the path
-  and line. In the extension it is replaced to open the file in the editor.
+  `window.openFunction(file, line)` in the page. In a browser it shows the
+  path and line and copies `path:line` for the editor's Go to File. The page
+  only defines it if it is not defined yet, and looks it up on every call, so
+  the extension replaces it to open the file in the editor.
 - **Colors only through CSS variables.** No hard-coded colors in components
   or chart options; read them from the variables, so the extension can map
-  them to the VS Code theme.
+  them to the VS Code theme. The page reads each variable as the browser
+  computes it, so a variable that points at another one (`var(--vscode-…)`)
+  still gives the charts a color. A test checks that color literals appear
+  only in variable definitions. Setting `data-theme="dark"` or `"light"` on
+  `<html>` overrides the system setting and redraws the charts.
 - **Stable command line.** The extension runs `fat_functions.py` with its
   arguments, so treat the options in section 8 and the `report.json` shape
   as a public contract: add options freely, but don't rename or remove them
@@ -356,7 +366,7 @@ Location: `.github/skills/fat-functions/` in a project (shared with the team) or
 
 Body tells Copilot to:
 
-1. Run `scripts/fat_functions.py` on the workspace with the bundled Python path.
+1. Run `scripts/fat_functions.py` on the workspace with the bundled Python path and `--no-open`, so no browser pops up.
 2. Read the stdout summary, and `report.json` if needed.
 3. Point the user to `report.html`.
 4. For the top offenders, read only those functions and judge whether each is genuinely a problem (a long but simple lookup table is fine). Functions with `forgiven: true` were accepted on purpose by the team (`#lizard forgive`): mention them, but do not suggest splitting them unless the user asks.

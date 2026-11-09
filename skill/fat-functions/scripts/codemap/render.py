@@ -1,16 +1,23 @@
-"""Write the report: report.json and the stdout summary (the HTML comes later)."""
+"""Write the report: report.html, report.json and the stdout summary."""
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable
 from dataclasses import asdict
 from pathlib import Path
 
+from codemap import VENDOR
 from codemap.measure import FileError, Measurement
 from codemap.score import LABELS, Scores, Thresholds
 
 REPORT_JSON = "report.json"
+REPORT_HTML = "report.html"
+TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / REPORT_HTML
+ECHARTS = VENDOR / "echarts.min.js"
+# Where report.html takes the data and the chart library.
+SLOTS = re.compile(r"/\*\{\{(DATA|ECHARTS)\}\}\*/")
 # Offenders listed in the stdout summary.
 SUMMARY_OFFENDERS = 5
 
@@ -40,8 +47,27 @@ def build_report(
     }
 
 
-def write_report(report: dict, out_dir: Path) -> Path:
-    """Write report.json into `out_dir` and return its path.
+def report_html(report: dict, project: str) -> str:
+    """Return report.html: the template with the report and ECharts inside it.
+
+    The page needs nothing else: no other files, fonts or network.
+    """
+    data = json.dumps(
+        {"project": project, "report": report},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    # A "</script>" or "<!--" in a name would end the data block early.
+    data = data.replace("<", "\\u003c")
+    library = ECHARTS.read_text(encoding="utf-8").replace("</script", "<\\/script")
+    slots = {"DATA": data, "ECHARTS": library}
+    # One pass, so nothing inside the data or the library is ever replaced.
+    template = TEMPLATE.read_text(encoding="utf-8")
+    return SLOTS.sub(lambda match: slots[match.group(1)], template)
+
+
+def write_report(report: dict, out_dir: Path, project: str) -> tuple[Path, Path]:
+    """Write report.html and report.json into `out_dir`; return their paths.
 
     A folder this creates gets a `.gitignore` that ignores everything in it,
     so reports stay out of git; a folder that already existed is left as is.
@@ -50,12 +76,13 @@ def write_report(report: dict, out_dir: Path) -> Path:
         out_dir.mkdir(parents=True)
         ignore_all = "# Written by Fat Functions: keep its reports out of git.\n*\n"
         _write_text(out_dir / ".gitignore", ignore_all)
-    path = out_dir / REPORT_JSON
-    _write_text(path, json.dumps(report, indent=1, ensure_ascii=False) + "\n")
-    return path
+    html_path, json_path = out_dir / REPORT_HTML, out_dir / REPORT_JSON
+    _write_text(html_path, report_html(report, project))
+    _write_text(json_path, json.dumps(report, indent=1, ensure_ascii=False) + "\n")
+    return html_path, json_path
 
 
-def summary_text(report: dict, report_path: Path) -> str:
+def summary_text(report: dict, html_path: Path, json_path: Path) -> str:
     """Return the few lines printed after a run, so Copilot rarely needs the JSON.
 
     Plain ASCII apart from names from the code: whoever reads the output may
@@ -91,8 +118,9 @@ def summary_text(report: dict, report_path: Path) -> str:
         _count(len(report["skipped_generated"]), "generated file") + " skipped",
     ]
     if report["errors"] or report["warnings"] or report["skipped_generated"]:
-        lines.append(f"Not fully measured: {', '.join(not_measured)}; see report.json.")
-    lines.append(f"Report: {report_path}")
+        lines.append(f"Not fully measured: {', '.join(not_measured)}; see the report.")
+    lines.append(f"Report: {html_path}")
+    lines.append(f"Data: {json_path}")
     return "\n".join(lines)
 
 
