@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fat Functions</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: summary strip, then diagnose (scatter) beside act (ranked list), then navigate (treemap) full width. Calm neutrals; color reserved for complexity. */
+:root{
+  --bg:#f5f6f4; --surface:#ffffff; --line:#e1e4e0; --fg:#1b201d; --muted:#5d655f; --faint:#8a918b;
+  --c-ok:#cfdcd2; --c-watch:#f1d58e; --c-soon:#f0a677; --c-now:#df5c55; --on-fill:#1b201d; --on-now:#ffffff;
+  --zone:rgba(223,92,85,.07); --accent:#2f6b57;
+  --f-sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SF Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#121614; --surface:#1a1f1c; --line:#2b322e; --fg:#e8ece9; --muted:#a3aca6; --faint:#78817b;
+  --c-ok:#3d5a4b; --c-watch:#8a7430; --c-soon:#a85a35; --c-now:#cf4a45; --on-fill:#e8ece9; --on-now:#ffffff;
+  --zone:rgba(207,74,69,.12); --accent:#7cc3a6; color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --bg:#121614; --surface:#1a1f1c; --line:#2b322e; --fg:#e8ece9; --muted:#a3aca6; --faint:#78817b;
+  --c-ok:#3d5a4b; --c-watch:#8a7430; --c-soon:#a85a35; --c-now:#cf4a45; --on-fill:#e8ece9; --on-now:#ffffff;
+  --zone:rgba(207,74,69,.12); --accent:#7cc3a6; color-scheme:dark;}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-sans);font-size:14px;line-height:1.5}
+.wrap{max-width:1180px;margin:0 auto;padding-block:28px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:20px}
+header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+h1{font-size:22px;font-weight:600;margin:0;letter-spacing:-.01em;text-wrap:balance}
+h1 code{font-family:var(--f-mono);font-weight:500;font-size:20px}
+.sub{color:var(--muted);margin:2px 0 0}
+.tag{font-family:var(--f-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 10px;background:var(--surface)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.stat{background:var(--surface);padding:12px 16px}
+.stat .k{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.stat .v{font-family:var(--f-mono);font-size:24px;font-weight:500;font-variant-numeric:tabular-nums}
+.stat .v.alert{color:var(--c-now)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;color:var(--muted);font-size:13px}
+.legend b{font-weight:500;color:var(--fg)}
+.sw{display:inline-flex;align-items:center;gap:6px}
+.sw i{width:12px;height:12px;border-radius:3px;display:inline-block}
+.grid2{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:16px;align-items:start}
+@media (max-width:920px){.grid2{grid-template-columns:minmax(0,1fr)}}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
+.ph{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+.step{font-family:var(--f-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
+h2{font-size:16px;font-weight:600;margin:0}
+.panel .sub{font-size:13px;margin:0 0 8px}
+#scatter{width:100%;height:400px}
+#chart{width:100%;height:560px}
+.hint{color:var(--faint);font-size:12px;margin:6px 0 0}
+.off{display:flex;flex-direction:column}
+.row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 6px;border:0;border-top:1px solid var(--line);background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;border-radius:0}
+.row:hover{background:color-mix(in srgb,var(--fg) 4%,transparent)}
+.row.active{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.rank{font-family:var(--f-mono);color:var(--faint);font-size:12px;width:20px}
+.fn{min-width:0}
+.fn .n{font-family:var(--f-mono);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fn .p{color:var(--muted);font-size:12px;font-family:var(--f-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+.chip{font-size:11px;font-weight:500;padding:3px 9px;border-radius:999px;white-space:nowrap}
+@media (max-width:560px){#chart{height:440px}#scatter{height:340px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Fat Functions · <code>invoice_app</code></h1>
+      <p class="sub">Find the functions that are too big and too tangled, see where they live, and fix the worst first.</p>
+    </div>
+    <span class="tag">Example data</span>
+  </header>
+
+  <section class="stats" id="stats" aria-label="Summary"></section>
+
+  <div class="legend" aria-label="Color legend">
+    <b>Complexity</b>
+    <span class="sw"><i style="background:var(--c-ok)"></i>1–5 simple</span>
+    <span class="sw"><i style="background:var(--c-watch)"></i>6–10 watch</span>
+    <span class="sw"><i style="background:var(--c-soon)"></i>11–20 split soon</span>
+    <span class="sw"><i style="background:var(--c-now)"></i>21+ split now</span>
+  </div>
+
+  <div class="grid2">
+    <section class="panel">
+      <div class="ph"><span class="step">Diagnose</span><h2>Size vs complexity</h2></div>
+      <p class="sub">Each dot is a function. The shaded corner holds functions that are both long and complex.</p>
+      <div id="scatter" role="img" aria-label="Scatter plot of every function: lines of code across, complexity up, with a shaded danger zone at 50+ lines and complexity 11+"></div>
+      <p class="hint">Select a dot to find it in the list and on the map.</p>
+    </section>
+
+    <section class="panel">
+      <div class="ph"><span class="step">Act</span><h2>Worst offenders</h2></div>
+      <p class="sub">Ranked by size × complexity.</p>
+      <div class="off" id="off"></div>
+    </section>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><span class="step">Navigate</span><h2>Where the code lives</h2></div>
+    <p class="sub">Block size is lines of code, color is complexity. Click a folder or file to zoom in.</p>
+    <div id="chart" role="img" aria-label="Treemap of invoice_app: folders, files and functions sized by lines of code and colored by complexity"></div>
+    <p class="hint">Hover any block for details. Use the path bar at the bottom to zoom back out.</p>
+  </section>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.0/echarts.min.js"></script>
+<script>
+const SRC = {
+  "api": {
+    "routes.py": [["create_invoice",74,13,18],["update_invoice",58,11,96],["list_invoices",38,6,158],["get_invoice",16,2,200],["delete_invoice",12,2,220]],
+    "auth.py": [["verify_token",34,8,12],["login",28,5,50],["refresh_session",15,3,82]],
+    "schemas.py": [["<module>",46,1,1],["InvoiceIn.validate_lines",22,6,60]]
+  },
+  "services": {
+    "billing.py": [["calculate_invoice",212,34,42],["apply_discounts",88,17,262],["InvoiceBuilder.build",64,12,356],["tax_for_region",46,9,428],["InvoiceBuilder.add_line",18,3,480],["round_money",8,1,502]],
+    "pdf_export.py": [["render_pdf",156,22,20],["draw_table",54,8,184],["draw_header",30,4,244],["load_fonts",14,2,280]],
+    "email.py": [["send_invoice",42,7,15],["build_message",26,3,62],["retry_send",20,5,94]],
+    "reconcile.py": [["reconcile_payments",118,19,10],["match_by_reference",36,7,134],["flag_mismatch",14,3,176]]
+  },
+  "models": {
+    "invoice.py": [["Invoice.validate",48,10,30],["Invoice.to_dict",22,2,84],["Invoice.from_row",20,3,110]],
+    "customer.py": [["Customer.validate",26,6,14],["Customer.to_dict",14,1,46]]
+  },
+  "web": {
+    "checkout.ts": [["submitOrder",96,18,22],["validateCard",40,9,124],["formatTotals",18,2,170]],
+    "cart.js": [["applyDiscount",44,8,5],["recalculate",30,5,55],["total",6,1,90]],
+    "InvoiceTable.tsx": [["InvoiceTable",132,21,8],["useSortedRows",28,5,146]]
+  },
+  "reports-java": {
+    "ReportBuilder.java": [["ReportBuilder::build",144,27,31],["ReportBuilder::addSection",40,6,182],["ReportBuilder::footer",18,2,228]],
+    "CsvExporter.java": [["CsvExporter::export",52,9,14],["CsvExporter::escape",16,4,72]]
+  },
+  "utils": {
+    "helpers.py": [["parse_date",24,6,5],["slugify",10,2,34],["chunked",8,2,48],["safe_get",12,4,60]]
+  },
+  "cli.py": [["main",132,26,10],["parse_args",36,3,148]]
+};
+const ZONE = {loc:50, cc:11};
+
+const status = cc => cc<=5?"ok":cc<=10?"watch":cc<=20?"soon":"now";
+const STATUS_LABEL = {ok:"Simple",watch:"Watch",soon:"Split soon",now:"Split now"};
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmt = n => n.toLocaleString("en-US");
+const short = n => n.split(/::|\./).pop();
+
+const leaves = [];
+function leaf(fn, filePath){
+  const [name,loc,cc,line] = fn;
+  const id = filePath+"::"+name;
+  leaves.push({id,name,loc,cc,line,file:filePath,st:status(cc)});
+  return {id,name,value:loc,cc,line,file:filePath,st:status(cc)};
+}
+const DATA = Object.entries(SRC).map(([k,v]) => Array.isArray(v)
+  ? {id:k,name:k,children:v.map(f=>leaf(f,k))}
+  : {id:k,name:k+"/",children:Object.entries(v).map(([file,fns])=>({id:k+"/"+file,name:file,children:fns.map(f=>leaf(f,k+"/"+file))}))});
+
+const byId = Object.fromEntries(leaves.map((l,i)=>[l.id,{...l,idx:i}]));
+const ranked = leaves.slice().sort((a,b)=>b.loc*b.cc-a.loc*a.cc).slice(0,8);
+const rankedIds = new Set(ranked.map(r=>r.id));
+
+const tot = leaves.reduce((s,l)=>s+l.loc,0);
+const files = new Set(leaves.map(l=>l.file)).size;
+const avg = (leaves.reduce((s,l)=>s+l.cc,0)/leaves.length).toFixed(1);
+const inZone = leaves.filter(l=>l.loc>=ZONE.loc&&l.cc>=ZONE.cc).length;
+document.getElementById("stats").innerHTML = [
+  ["Lines of code",fmt(tot),""],["Files",files,""],["Functions",leaves.length,""],["Avg complexity",avg,""],["In danger zone",inZone,"alert"]
+].map(([k,v,c])=>`<div class="stat"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`).join("");
+
+const tm = echarts.init(document.getElementById("chart"));
+const sc = echarts.init(document.getElementById("scatter"));
+let selected = null;
+
+function palette(){
+  return {C:{ok:css("--c-ok"),watch:css("--c-watch"),soon:css("--c-soon"),now:css("--c-now")},
+    surface:css("--surface"),line:css("--line"),fg:css("--fg"),muted:css("--muted"),faint:css("--faint"),
+    onFill:css("--on-fill"),onNow:css("--on-now"),zone:css("--zone"),sans:css("--f-sans"),mono:css("--f-mono")};
+}
+function tipBox(P){
+  return {backgroundColor:P.surface,borderColor:P.line,borderWidth:1,padding:[10,12],
+    textStyle:{color:P.fg,fontFamily:P.sans,fontSize:12},
+    extraCssText:"box-shadow:0 6px 24px rgba(0,0,0,.12);border-radius:8px;"};
+}
+function fnTip(d,P){
+  return `<div style="font-family:${P.mono};font-weight:500">${d.name}</div>
+    <div style="color:${P.muted};font-family:${P.mono};font-size:11px">${d.file}:${d.line}</div>
+    <div style="margin-top:6px">${fmt(d.loc)} lines · complexity <b>${d.cc}</b></div>
+    <div style="margin-top:4px;display:inline-block;padding:2px 8px;border-radius:999px;background:${P.C[d.st]};color:${d.st==="now"?P.onNow:P.onFill};font-size:11px">${STATUS_LABEL[d.st]}</div>`;
+}
+
+function treemapOption(P){
+  const paint = nodes => nodes.map(n => n.children
+    ? {...n, children:paint(n.children)}
+    : {...n, itemStyle:{color:P.C[n.st]}, label:{color:n.st==="now"?P.onNow:P.onFill}});
+  return {
+    animationDurationUpdate:450,
+    tooltip:{...tipBox(P), formatter:p=>{
+      const d=p.data;
+      if(d.cc===undefined) return `<div style="font-family:${P.mono};font-weight:500">${p.treePathInfo.slice(1).map(t=>t.name).join("")}</div><div style="color:${P.muted}">${fmt(p.value)} lines</div>`;
+      return fnTip(byId[d.id],P);
+    }},
+    series:[{
+      type:"treemap", name:"invoice_app", data:paint(DATA),
+      top:4,left:0,right:0,bottom:44, roam:false, nodeClick:"zoomToNode", squareRatio:1.2,
+      breadcrumb:{show:true,bottom:6,left:0,height:26,emptyItemWidth:24,
+        itemStyle:{color:P.surface,borderColor:P.line,borderWidth:1,shadowBlur:0,textStyle:{color:P.fg,fontFamily:P.sans}},
+        emphasis:{itemStyle:{color:P.line,textStyle:{color:P.fg}}}},
+      label:{show:true,position:"insideTopLeft",fontFamily:P.mono,fontSize:11,padding:[5,6],overflow:"truncate",
+        formatter:p=> p.data.cc===undefined? p.name : `${short(p.name)}\n{n|${p.value} loc}`,
+        rich:{n:{fontSize:10,opacity:.75,fontFamily:P.mono,padding:[2,0,0,0]}}},
+      upperLabel:{show:true,height:24,fontFamily:P.sans,fontWeight:600,fontSize:12,color:P.fg,padding:[0,8],
+        formatter:p=>`${p.name}   {s|${fmt(p.value)} loc}`, rich:{s:{color:P.muted,fontWeight:400,fontSize:11,fontFamily:P.mono}}},
+      itemStyle:{borderColor:P.surface},
+      levels:[
+        {itemStyle:{borderWidth:0,gapWidth:8,borderColor:P.surface}},
+        {itemStyle:{borderWidth:3,gapWidth:4,borderColor:P.line,borderRadius:8}},
+        {itemStyle:{borderWidth:2,gapWidth:2,borderColor:P.surface,borderRadius:6},upperLabel:{fontWeight:500,fontFamily:P.mono,fontSize:11,height:20}},
+        {itemStyle:{borderWidth:0,gapWidth:0,borderRadius:4}}
+      ],
+      emphasis:{itemStyle:{borderColor:P.fg,borderWidth:2}}
+    }]
+  };
+}
+
+function scatterOption(P){
+  const maxX = Math.ceil(Math.max(...leaves.map(l=>l.loc))*1.1/10)*10;
+  const maxY = Math.ceil(Math.max(...leaves.map(l=>l.cc))*1.12);
+  const axis = (name)=>({name,nameLocation:"middle",nameGap:30,nameTextStyle:{color:P.muted,fontFamily:P.sans,fontSize:12},
+    axisLine:{lineStyle:{color:P.line}},axisTick:{show:false},axisLabel:{color:P.faint,fontFamily:P.mono,fontSize:11},
+    splitLine:{lineStyle:{color:P.line,type:[3,4]}}});
+  return {
+    animationDurationUpdate:300,
+    grid:{left:46,right:16,top:16,bottom:44},
+    tooltip:{...tipBox(P),trigger:"item",formatter:p=>fnTip(byId[p.data.id],P)},
+    xAxis:{...axis("Lines of code"),type:"value",min:0,max:maxX},
+    yAxis:{...axis("Complexity"),type:"value",min:0,max:maxY,nameGap:32},
+    series:[{
+      type:"scatter",
+      data:leaves.map(l=>({value:[l.loc,l.cc],id:l.id,name:l.name,
+        symbolSize:Math.max(9,Math.min(22,Math.sqrt(l.loc)*1.5)),
+        itemStyle:{color:P.C[l.st],borderColor:P.surface,borderWidth:1.5,opacity:l.st==="ok"?.85:1},
+        label:{show:rankedIds.has(l.id),formatter:short(l.name),position:"right",distance:6,color:P.fg,fontFamily:P.mono,fontSize:11}})),
+      labelLayout:{hideOverlap:true,moveOverlap:"shiftY"},
+      emphasis:{scale:1.5,itemStyle:{borderColor:P.fg,borderWidth:2},label:{show:true}},
+      markArea:{silent:true,itemStyle:{color:P.zone},
+        label:{show:true,position:"insideTopRight",color:P.C.now,fontFamily:P.sans,fontWeight:500,fontSize:12,formatter:"Split these"},
+        data:[[{coord:[ZONE.loc,ZONE.cc]},{coord:[maxX,maxY]}]]},
+      markLine:{silent:true,symbol:"none",lineStyle:{color:P.faint,type:[4,4],width:1},label:{show:false},
+        data:[{xAxis:ZONE.loc},{yAxis:ZONE.cc}]}
+    }]
+  };
+}
+
+function renderOff(P){
+  document.getElementById("off").innerHTML = ranked.map((l,i)=>`
+    <button class="row${selected===l.id?" active":""}" type="button" data-id="${l.id}" id="off-${i}" aria-pressed="${selected===l.id}">
+      <span class="rank">${String(i+1).padStart(2,"0")}</span>
+      <span class="fn"><div class="n">${short(l.name)}</div><div class="p">${l.file}:${l.line} · ${fmt(l.loc)} loc · cc ${l.cc}</div></span>
+      <span class="chip" style="background:${P.C[l.st]};color:${l.st==="now"?P.onNow:P.onFill}">${STATUS_LABEL[l.st]}</span>
+    </button>`).join("");
+}
+
+function select(id, from){
+  const l = byId[id]; if(!l) return;
+  selected = id;
+  document.querySelectorAll(".row").forEach(r=>{const on=r.dataset.id===id;r.classList.toggle("active",on);r.setAttribute("aria-pressed",on);});
+  sc.dispatchAction({type:"downplay",seriesIndex:0});
+  sc.dispatchAction({type:"highlight",seriesIndex:0,dataIndex:l.idx});
+  if(from!=="scatter") sc.dispatchAction({type:"showTip",seriesIndex:0,dataIndex:l.idx});
+  if(from!=="treemap") tm.dispatchAction({type:"treemapZoomToNode",targetNodeId:l.file});
+}
+
+sc.on("click",p=>{ if(p.componentType==="series") select(p.data.id,"scatter"); });
+tm.on("click",p=>{ if(p.data && p.data.cc!==undefined) select(p.data.id,"treemap"); });
+document.getElementById("off").addEventListener("click",e=>{
+  const b=e.target.closest(".row"); if(!b) return;
+  select(b.dataset.id,"list");
+});
+
+function draw(){
+  const P = palette();
+  tm.setOption(treemapOption(P),true);
+  sc.setOption(scatterOption(P),true);
+  renderOff(P);
+  if(selected){ const l=byId[selected]; sc.dispatchAction({type:"highlight",seriesIndex:0,dataIndex:l.idx}); }
+}
+draw();
+try{matchMedia("(prefers-color-scheme: dark)").addEventListener("change",draw);}catch(e){}
+new MutationObserver(draw).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});
+window.addEventListener("resize",()=>{tm.resize();sc.resize();});
+if(document.fonts&&document.fonts.ready){document.fonts.ready.then(draw);}
+</script>
+
+</body>
+</html>
