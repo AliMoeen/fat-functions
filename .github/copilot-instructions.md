@@ -8,9 +8,9 @@ This repository builds **Fat Functions**: a tool that measures function size and
 
 - **Code measures, the LLM interprets.** The engine is deterministic Python. Never add AI calls, network access, or anything that imports or runs the analyzed project. Never modify the analyzed project's code; only write into its `.fat-functions/` folder.
 - **Runtime = Python 3 standard library + `skill/fat-functions/scripts/vendor/`.** Do not add runtime dependencies. Anything new that must ship gets vendored, pinned in `vendor/VERSIONS.txt`, and keeps its license file. Dev-only tools go in `pyproject.toml` as dev dependencies.
-- **lizard is the only parser.** All lizard-specific code lives in the single conversion function in `codemap/measure.py`. Nothing else imports lizard.
+- **lizard is the only parser.** All lizard-specific code lives in the marked lizard section at the end of `codemap/measure.py`, with a single conversion function (`_from_lizard`). Nothing else imports lizard.
 - **Keep it simple.** Prefer the smallest change that works. Do not add abstractions, plugin systems or configuration for needs we do not have yet.
-- **Never crash on one bad file.** Record it in `errors` and continue.
+- **Never crash on one bad file.** Record it in `errors` and continue. Never lose functions silently either: if a file is only partly measured, record a warning with its line.
 - **Paths** in records and reports are relative to the analyzed root and use `/` on every OS. Use `pathlib`.
 - **Same input, same output.** Sort anything that would otherwise depend on filesystem order.
 

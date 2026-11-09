@@ -69,7 +69,7 @@ Decision: use **lizard** for all languages, including Python. Do not use Python'
 
 Why: one dependency and one code path covers Python, JavaScript, TypeScript, Java, C#, C/C++, Go, Kotlin, Swift, Rust, PHP, Ruby and more. Language coverage becomes free instead of a per-language cost. Small precision losses do not change the answer to "which functions are fat."
 
-Keep exactly **one conversion function** in `measure.py` that turns lizard output into our own record shape. That is the only place that knows about lizard, so a future swap (tree-sitter for one language, `ast` for Python docstrings) touches one place.
+Keep all lizard code in **one marked section at the end of `measure.py`**: `is_supported` (can lizard read this file type?), the one conversion function `_from_lizard` that turns lizard output into our own record shape, and its small helpers. Nothing else imports lizard, so a future swap (tree-sitter for one language, say) touches one place. (Build step 3 had a single function; build step 4 added `is_supported` for `scan.py` and the helpers for generated-code and forgive handling.)
 
 Upgrade only when a real problem appears:
 
@@ -92,7 +92,10 @@ Known quirks the code must handle:
 - **A callback on the same line as its function shares its line range.** In `const total = (c) => c.items.reduce((s, i) => s + i.price, 0);` lizard reports `total` and, for the inner arrow, `(anonymous)`, both on line 8 to 8. (An earlier reading took this for one arrow function reported twice; a one-line arrow without a callback is reported once.) Counting both would count the line twice, so `measure.py` keeps one function per file + start line + end line: a named one over `(anonymous)`, then the outermost. A callback on its own line has its own range and is kept. lizard counts 0 parameters for arrow callbacks like `(s, i) => …`.
 - **Syntax errors are not reported.** lizard returns no error, and a broken Python file can lose every function, even valid ones after the error.
 - **lizard reads files with the OS default encoding and hides read errors**, and reports a `RecursionError` (for example, thousands of nested braces) only on stderr, returning partial results. So `measure.py` reads each file itself as UTF-8 (BOM allowed, bad bytes replaced, any line endings), and turns anything lizard writes to stderr into an `errors` entry.
-- **A comment containing `GENERATED CODE` makes lizard stop reading the file.** Every function after it is lost, and in Python the one just before it too; a generated-file header gives zero functions. `#lizard forgive` comments hide a function (in Python, the one before the comment). `scan.py` should skip generated files on purpose, so this never happens silently (build step 4).
+- **A comment containing `GENERATED CODE` makes lizard stop reading the file.** Every function after it is lost, and in Python the one it is in or follows too; a generated-file header gives zero functions. Only an exact, uppercase match inside a comment counts; the phrase in a string does not. How we handle it (build step 4):
+  - A marker in the first 10 lines means the whole file is generated (section 6): skipped and listed, or, with `--include-generated`, measured in full. For that, `measure.py` blanks lizard's phrase in those lines so lizard reads on.
+  - Further down, lizard's rule stands (the code below the marker is generated), but never silently: `measure.py` finds the comment with lizard's own tokens and comment rules and adds a warning with its line (section 8).
+- **`#lizard forgive` makes lizard leave a function out.** The rules differ by language: Python takes `#lizard forgive` and `# lizard forgive` and, in the function body or between functions, hides the function it is in or follows; it even hides the whole function for `#lizard forgives(length)`, which other languages treat as silencing one metric. JavaScript and C-style languages need `// #lizard forgive` (without `#`, nothing happens). We measure forgiven functions anyway and mark them `forgiven: true` (section 6): the comment silences a lizard check in someone's CI, but the function is just as big. `measure.py` runs lizard a second time with the words `lizard forgive` replaced by spaces of the same length, so no line or column moves, and the functions that only that run finds are the forgiven ones. That reuses lizard's own rules instead of copying them. The second run only happens for files that contain the words.
 - **Deeply nested functions are slow.** Time doubles with each level of nested Python functions: 0.09 s at 25 levels, so a minute or more past 35. Real code does not nest that deep; add a per-file time limit only if the corpus shows a need.
 - **Language names come from lizard's readers:** `python`, `javascript`, `typescript`, `java`; `.jsx` files are `tsx` and `.c` files are `cpp`.
 - **Bundle size is about 6.2 MB.** lizard pulls in `pygments` (most of the size) and `pathspec`. All pure Python, so bundling works on every OS. Kept as wheels (section 5), the whole `vendor/` folder, ECharts included, is 2.5 MB.
@@ -118,25 +121,31 @@ Not yet verified: Windows paths, speed on very large repositories, behaviour whe
 
 | Module | Job |
 |---|---|
-| `scan.py` | Walk the target folder and collect source files. Skip `.git`, `.venv`, `venv`, `__pycache__`, `site-packages`, `node_modules`, `build`, `dist`, `target`, `*.min.js`, generated code, and anything in `.gitignore`. Exclusions are configurable. |
-| `measure.py` | Run lizard on each file and convert results to records. Files it cannot read, file types lizard does not know, and lizard failures go in an `errors` list, and the run keeps going; never crash on one bad file. |
+| `scan.py` | Walk the target folder and collect the source files lizard can read (asking `measure.is_supported`). Decides by path only. Skips folders named `.git`, `.venv`, `venv`, `__pycache__`, `site-packages`, `node_modules`, `build`, `dist`, `target` or `.fat-functions` (our own reports) at any depth, `*.min.js`, anything a `.gitignore` in the root or any folder below ignores, and anything matching `--exclude`. Folders it cannot read go in `errors`. |
+| `measure.py` | Read each file once, then decide by content. Files whose first 10 lines say they were generated are skipped and listed (unless `--include-generated`); the rest are run through lizard and converted to records. Files it cannot read, file types lizard does not know, and lizard failures go in an `errors` list, and the run keeps going; never crash on one bad file. Things that limit what could be measured in a file go in `warnings`. |
 | `tree.py` | Build folder → file → function, rolling sizes up so each parent equals the sum of its children. Code at module level that is not in any function becomes a `<module>` block (like WinDirStat's `<Files>`). Nested functions are separate records, and the line that starts a nested function counts in both (outer 5 + inner 3 lines of code in a 7-line file), so `tree.py` must nest or subtract them rather than add them up. |
 | `score.py` | Apply thresholds, assign a status to each function, rank the worst offenders. |
 | `render.py` | Write `report.json` and the HTML report, and print a short summary to stdout. |
+
+`scan.py` follows `.gitignore` files with git's pattern rules (via pathspec), each one for its own folder and below, with two simplifications: a `!pattern` only re-includes what its own file excluded, not what a parent folder's file excluded, and `.git/info/exclude` and the user's global git excludes are not read. All path matching is case-sensitive on every OS, so the same folder gives the same files on Windows, macOS and Linux.
 
 What the engine never does: call an AI, suggest refactors, modify the analyzed code, use the network, import or run the analyzed project. Same input always gives the same output.
 
 ### Record shape (one per function)
 
 ```
-{id, name, file, start_line, end_line, loc, complexity, params, language, status}
+{id, name, file, start_line, end_line, loc, complexity, params, language, forgiven, status}
 ```
 
 `id` is `"<relative file path>::<function name>"`. When a file has several functions with the same name (methods of different classes, anonymous callbacks), the second and later get `#2`, `#3`… in source order, so ids are unique and the first one's id does not change when another is added. `file` paths are relative to the analyzed root and always use `/`.
 
 `loc` is **lines of code**: lizard's code-line count, without blank lines, comments or docstrings. It is not `end_line - start_line + 1`, which counts every line the function spans. Chosen in build step 3 because comments and spacing should not make a function look fatter, and it is what lizard and most metrics tools mean by lines of code. `status` is filled in by `score.py`.
 
-`measure.py` also returns each file's language and code-line count (the `<module>` block in `tree.py` is what is left after the functions), and an `errors` list. Results are sorted by file path, then by start line.
+`forgiven` is `true` when the source marks the function with `#lizard forgive` (section 4), otherwise `false`. Forgiven functions are measured, scored and ranked like any other, because they are just as big; the report labels them "Forgiven" in every view, and the skill does not suggest splitting them unless asked (section 12). Chosen in build step 4 over dropping them with a warning: the team decided to accept these functions, and that is exactly what Copilot needs to know when judging them.
+
+`measure.py` also returns each file's language and code-line count (the `<module>` block in `tree.py` is what is left after the functions), plus the `errors`, `warnings` and `skipped_generated` lists of section 8. Results are sorted by file path, then by start line.
+
+**Generated files** are recognised by their first 10 lines, where code generators put their notice. The markers, matched in this order of position (the earliest one in the header wins): `GENERATED CODE` (lizard's own, Dart), `DO NOT EDIT` (Go, protobuf, gRPC; but not `DO NOT EDIT THIS LINE`, which bump2version puts on hand-written version lines), `@generated` (Meta's convention), and `auto-generated`, `autogenerated` or `automatically generated` in any case (.NET, pygments and many more). Tried on the dev environment's `site-packages` (1,104 Python files) in build step 4: all 12 files it skipped are generated. Calibrate on the corpus (build step 7). Skipped files are listed with the text that matched, so a wrong guess is easy to spot and fix with `--include-generated` or `--exclude`.
 
 ## 7. Scoring
 
@@ -150,7 +159,7 @@ Status by cyclomatic complexity:
 | 21+ | `now` | Split now |
 
 - **Danger zone**: functions with 50+ lines of code **and** complexity 11+.
-- **Ranking**: worst offenders sorted by `loc × complexity`.
+- **Ranking**: worst offenders sorted by `loc × complexity`. Forgiven functions keep their place in the ranking and get their status like any other (section 6).
 - These defaults are placeholders. Calibrate them against the test corpus (section 11) so that only a few percent of functions land in the danger zone. Allow per-language overrides later; a 50-line Java method is not the same as 50 lines of Python.
 
 ## 8. Outputs
@@ -167,21 +176,31 @@ Written into the analyzed project, in `.fat-functions/` (never into the tool's o
   "offenders": [
     {"id": "services/billing.py::calculate_invoice", "name": "calculate_invoice",
      "file": "services/billing.py", "start_line": 42, "end_line": 253,
-     "loc": 187, "complexity": 34, "status": "now"}
+     "loc": 187, "complexity": 34, "forgiven": false, "status": "now"}
   ],
   "tree": {"name": "<root>", "children": ["..."]},
-  "errors": [{"file": "legacy/old.py", "error": "..."}]
+  "errors": [{"file": "legacy/old.py", "error": "..."}],
+  "warnings": [{"file": "api/client.js", "line": 120,
+                "warning": "lizard stops reading at this \"GENERATED CODE\" comment: ..."}],
+  "skipped_generated": [{"file": "api/models_pb2.py", "marker": "DO NOT EDIT"}]
 }
 ```
 
-stdout: a few lines with totals and the top 5 offenders, so Copilot often does not need to open the JSON.
+- `errors`: files or folders that could not be measured at all.
+- `warnings` (added in build step 4): a file was measured, but something at that line limits what could be measured, so nothing is lost silently. Today the only one is a `GENERATED CODE` comment past the header (section 4).
+- `skipped_generated` (added in build step 4): every file left out because its header says it was generated, with the text that matched, not just a count, so a wrong guess is easy to spot.
+
+stdout: a few lines with totals and the top 5 offenders, so Copilot often does not need to open the JSON. It also gives the number of errors, warnings and skipped generated files when there are any.
 
 ### Command line
 
 ```
 python fat_functions.py [path] --out .fat-functions/ --exclude tests migrations
-                         --max-loc 50 --max-complexity 10 --no-open
+                         --max-loc 50 --max-complexity 10 --include-generated --no-open
 ```
+
+- `--exclude` takes `.gitignore`-style patterns relative to the analyzed root: `tests` skips every file or folder named `tests`, `src/old/` one folder.
+- `--include-generated` measures generated files instead of skipping them (added in build step 4).
 
 ## 9. The report page
 
@@ -194,6 +213,8 @@ Three linked views, each with one job:
 3. **Navigate — treemap.** Folder → file → function, block size = lines of code, color = complexity. Click to zoom; path bar to zoom out.
 
 Selecting a function in any view highlights it in the other two (dot highlighted, row highlighted, treemap zooms to its file).
+
+Forgiven functions (section 6) stay in all three views, with a "Forgiven" label on their dot, row and block, and in the tooltip. Warnings and skipped generated files (section 8) are listed on the page too, with file and line, so nothing the tool left out is hidden from the reader.
 
 Visual rules (these are what make it look polished, unlike the classic D3 Flare treemap):
 
@@ -309,8 +330,9 @@ Body tells Copilot to:
 1. Run `scripts/fat_functions.py` on the workspace with the bundled Python path.
 2. Read the stdout summary, and `report.json` if needed.
 3. Point the user to `report.html`.
-4. For the top offenders, read only those functions and judge whether each is genuinely a problem (a long but simple lookup table is fine).
-5. When asked, propose how to split a function, write the refactor, run the tests, and re-run the tool to confirm the improvement.
+4. For the top offenders, read only those functions and judge whether each is genuinely a problem (a long but simple lookup table is fine). Functions with `forgiven: true` were accepted on purpose by the team (`#lizard forgive`): mention them, but do not suggest splitting them unless the user asks.
+5. Mention `warnings` and `skipped_generated` when there are any, so the user knows what was not measured.
+6. When asked, propose how to split a function, write the refactor, run the tests, and re-run the tool to confirm the improvement.
 
 ## 13. Distribution
 
