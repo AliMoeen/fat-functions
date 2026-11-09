@@ -221,5 +221,7 @@ __marimo__/
 
 # Fat Functions
 .fat-functions/
-.corpus/
-.corpus-out/
+.test-repos/
+.test-repos-out/
+test-repos/repos.local.toml
+test-repos/baseline.local.json

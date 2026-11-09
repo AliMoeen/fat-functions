@@ -8,6 +8,8 @@
 dev = [
     "pytest>=8",
     "ruff==0.17.3",
+    # tools/ read test-repos/repos.toml; tomllib is only built in from 3.11.
+    "tomli>=2; python_version < '3.11'",
 ]
 
 [tool.pytest.ini_options]

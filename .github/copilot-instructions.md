@@ -24,7 +24,7 @@ This repository builds **Fat Functions**: a tool that measures function size and
 
 - Every behaviour change comes with a test. Run `pytest` before considering work done.
 - Fixture numbers in `tests/fixtures/` are hand-checked. If a fixture's expected value changes, explain why in the change.
-- Changes that affect output on real code: run `tools/run_corpus.py` and `tools/compare.py`, and describe the differences. Only accept a new baseline when the differences are intended.
+- Changes that affect output on real code: run `tools/run_test_repos.py` and `tools/compare.py`, and describe the differences. Only accept a new baseline when the differences are intended.
 
 ## Working style
 

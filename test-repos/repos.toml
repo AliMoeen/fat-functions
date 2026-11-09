@@ -1,0 +1,59 @@
+# The test repositories: real code the tool is tried on before changes that
+# affect output (docs/DESIGN.md section 11). Each is pinned to an exact commit,
+# so a difference in results always comes from the tool, never from the code.
+#
+#   python tools/fetch_test_repos.py   clone or update them into .test-repos/
+#   python tools/run_test_repos.py     measure them into .test-repos-out/
+#   python tools/compare.py            show what changed against baseline.json
+#
+# Private repositories go in repos.local.toml next to this file (git ignores
+# it), in the same format; there an entry may give `path` to a checkout on
+# disk instead of `url` and `commit`. Their results stay out of baseline.json.
+
+[[repo]]
+name = "requests"
+url = "https://github.com/psf/requests"
+commit = "b25c87d7cb8d6a18a37fa12442b5f883f9e41741"  # v2.32.5
+why = "everyday Python library"
+
+[[repo]]
+name = "flask"
+url = "https://github.com/pallets/flask"
+commit = "22d924701a6ae2e4cd01e9a15bbaf3946094af65"  # 3.1.3
+why = "everyday Python framework"
+
+[[repo]]
+name = "django"
+url = "https://github.com/django/django"
+commit = "c14b756185c88f7f2eb745ff061f3c221fea9de7"  # 5.2.9
+why = "large Python project: stress test for size and speed"
+
+[[repo]]
+name = "express"
+url = "https://github.com/expressjs/express"
+commit = "cd7d4397c398a3f3ecadeaf9ef6ac1377bd414c4"  # v5.1.0
+why = "JavaScript"
+
+[[repo]]
+name = "zod"
+url = "https://github.com/colinhacks/zod"
+commit = "e62341b1aaf720709ee5f31785db25d5c0491659"  # v3.24.4
+why = "TypeScript"
+
+[[repo]]
+name = "excalidraw"
+url = "https://github.com/excalidraw/excalidraw"
+commit = "a2ec2889babf7d2295469c6d90ebe77fae57df84"  # v0.18.1
+why = "TypeScript with React (TSX)"
+
+[[repo]]
+name = "spring-petclinic"
+url = "https://github.com/spring-projects/spring-petclinic"
+commit = "500158f732419217507c7656904b8e6aa1bcc0d6"  # main, no release tags
+why = "Java"
+
+[[repo]]
+name = "jquery"
+url = "https://github.com/jquery/jquery"
+commit = "f55d0ec8f28d648ac6429d03f1e2102d85912e86"  # 1.12.4
+why = "messy legacy JavaScript: long functions, old patterns"

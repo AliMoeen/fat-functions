@@ -43,6 +43,17 @@ ruff check .
 ruff format --check .
 ```
 
+Changes that affect the results on real code also get tried on the test repositories, real projects pinned to exact commits in `test-repos/repos.toml`:
+
+```bash
+python tools/fetch_test_repos.py   # once, and after the list changes
+python tools/run_test_repos.py     # reports in .test-repos-out/, see index.html
+python tools/compare.py            # what changed against test-repos/baseline.json
+python tools/compare.py --accept   # only when every difference is intended
+```
+
+All three take `--only requests,flask` to work on a few. Private repositories go in `test-repos/repos.local.toml`, which git ignores.
+
 Third-party code that ships with the tool lives in `skill/fat-functions/scripts/vendor/`, pinned in `VERSIONS.txt`. To change a version, edit its pin and run `python tools/update_vendor.py`.
 
 ## License

@@ -91,16 +91,17 @@ Known quirks the code must handle:
 - **Python and TypeScript methods lose their class name.** Python reports `build`, not `InvoiceBuilder.build`. Java reports `Order::shipping`. Nested Python functions are named `outer.inner`, but two levels down lizard repeats the prefix: `a.a.b.c` for `c` inside `b` inside `a`. Functions still group correctly under their file. Class grouping is a later nice-to-have. Two classes with a method of the same name give two functions with the same name in one file, so `measure.py` numbers repeated ids (section 6).
 - **A callback on the same line as its function shares its line range.** In `const total = (c) => c.items.reduce((s, i) => s + i.price, 0);` lizard reports `total` and, for the inner arrow, `(anonymous)`, both on line 8 to 8. (An earlier reading took this for one arrow function reported twice; a one-line arrow without a callback is reported once.) Counting both would count the line twice, so `measure.py` keeps one function per file + start line + end line: a named one over `(anonymous)`, then the outermost. A callback on its own line has its own range and is kept. lizard counts 0 parameters for arrow callbacks like `(s, i) => …`.
 - **Syntax errors are not reported.** lizard returns no error, and a broken Python file can lose every function, even valid ones after the error.
+- **lizard has bugs of its own.** On jQuery's bundled `external/qunit/qunit.js` its JavaScript reader fails with an `IndexError` (in `javascript_bindings.py`); `measure.py` records it as an error and goes on (seen in build step 7). Worth re-checking when lizard is upgraded.
 - **lizard reads files with the OS default encoding and hides read errors**, and reports a `RecursionError` (for example, thousands of nested braces) only on stderr, returning partial results. So `measure.py` reads each file itself as UTF-8 (BOM allowed, bad bytes replaced, any line endings), and turns anything lizard writes to stderr into an `errors` entry.
 - **A comment containing `GENERATED CODE` makes lizard stop reading the file.** Every function after it is lost, and in Python the one it is in or follows too; a generated-file header gives zero functions. Only an exact, uppercase match inside a comment counts; the phrase in a string does not. How we handle it (build step 4):
   - A marker in the first 10 lines means the whole file is generated (section 6): skipped and listed, or, with `--include-generated`, measured in full. For that, `measure.py` blanks lizard's phrase in those lines so lizard reads on.
   - Further down, lizard's rule stands (the code below the marker is generated), but never silently: `measure.py` finds the comment with lizard's own tokens and comment rules and adds a warning with its line (section 8).
 - **`#lizard forgive` makes lizard leave a function out.** The rules differ by language: Python takes `#lizard forgive` and `# lizard forgive` and, in the function body or between functions, hides the function it is in or follows; it even hides the whole function for `#lizard forgives(length)`, which other languages treat as silencing one metric. JavaScript and C-style languages need `// #lizard forgive` (without `#`, nothing happens). We measure forgiven functions anyway and mark them `forgiven: true` (section 6): the comment silences a lizard check in someone's CI, but the function is just as big. `measure.py` runs lizard a second time with the words `lizard forgive` replaced by spaces of the same length, so no line or column moves, and the functions that only that run finds are the forgiven ones. That reuses lizard's own rules instead of copying them. The second run only happens for files that contain the words.
-- **Deeply nested functions are slow.** Time doubles with each level of nested Python functions: 0.09 s at 25 levels, so a minute or more past 35. Real code does not nest that deep; add a per-file time limit only if the corpus shows a need.
+- **Deeply nested functions are slow.** Time doubles with each level of nested Python functions: 0.09 s at 25 levels, so a minute or more past 35. Real code does not nest that deep; add a per-file time limit only if the test repositories show a need. They did not (build step 7): Django's 2,930 files take under a minute, about 7,000 lines of code a second.
 - **Language names come from lizard's readers:** `python`, `javascript`, `typescript`, `java`; `.jsx` files are `tsx` and `.c` files are `cpp`.
 - **Bundle size is about 6.2 MB.** lizard pulls in `pygments` (most of the size) and `pathspec`. All pure Python, so bundling works on every OS. Kept as wheels (section 5), the whole `vendor/` folder, ECharts included, is 2.5 MB.
 
-Not yet verified: Windows paths, speed on very large repositories, behaviour when Python is missing (extension stage).
+Not yet verified: behaviour when Python is missing (extension stage). Windows paths and speed on a large repository were checked in build step 7 (section 11).
 
 ## 5. Dependencies and vendoring
 
@@ -146,7 +147,7 @@ What the engine never does: call an AI, suggest refactors, modify the analyzed c
 
 `measure.py` also returns each file's language and code-line count (the `<module>` block in `tree.py` is what is left after the functions), plus the `errors`, `warnings` and `skipped_generated` lists of section 8. Results are sorted by file path, then by start line.
 
-**Generated files** are recognised by their first 10 lines, where code generators put their notice. The markers, matched in this order of position (the earliest one in the header wins): `GENERATED CODE` (lizard's own, Dart), `DO NOT EDIT` (Go, protobuf, gRPC; but not `DO NOT EDIT THIS LINE`, which bump2version puts on hand-written version lines), `@generated` (Meta's convention), and `auto-generated`, `autogenerated` or `automatically generated` in any case (.NET, pygments and many more). Tried on the dev environment's `site-packages` (1,104 Python files) in build step 4: all 12 files it skipped are generated. Calibrate on the corpus (build step 7). Skipped files are listed with the text that matched, so a wrong guess is easy to spot and fix with `--include-generated` or `--exclude`.
+**Generated files** are recognised by their first 10 lines, where code generators put their notice. The markers, matched in this order of position (the earliest one in the header wins): `GENERATED CODE` (lizard's own, Dart), `DO NOT EDIT` (Go, protobuf, gRPC; but not `DO NOT EDIT THIS LINE`, which bump2version puts on hand-written version lines), `@generated` (Meta's convention), and `auto-generated`, `autogenerated` or `automatically generated` in any case (.NET, pygments and many more). Tried on the dev environment's `site-packages` (1,104 Python files) in build step 4: all 12 files it skipped are generated. On the test repositories (build step 7) it skipped 3 of 4,139 files: Excalidraw's two WebAssembly bindings (`// GENERATED CODE -- DO NOT EDIT!`), rightly, and requests' `docs/conf.py`, which calls itself an "autogenerated file" because `sphinx-quickstart` wrote it; it is mostly settings, so skipping it costs little. No change to the markers. Skipped files are listed with the text that matched, so a wrong guess is easy to spot and fix with `--include-generated` or `--exclude`.
 
 ## 7. Scoring
 
@@ -161,7 +162,18 @@ Status by cyclomatic complexity:
 
 - **Danger zone**: functions with **more than 50 lines of code and complexity over 10** (so 51+ and 11+), set with `--max-loc` and `--max-complexity`. "Max" means the highest value that is still fine, as in flake8's `--max-complexity` and lizard's own thresholds. (Until build step 5 this said "50+ lines", which contradicted `--max-loc 50`; the max reading won because it matches those tools.) The thresholds only move the danger zone; the status bands above stay fixed.
 - **Ranking**: worst offenders sorted by `loc × complexity`, ties by `id`, so the order never depends on input order. Forgiven functions keep their place in the ranking and get their status like any other (section 6). `report.json` lists the top 20 as `offenders`; every function is in `tree`.
-- These defaults are placeholders. Calibrate them against the test corpus (section 11) so that only a few percent of functions land in the danger zone. Allow per-language overrides later; a 50-line Java method is not the same as 50 lines of Python.
+- These defaults are placeholders. Calibrate them against the test repositories (section 11) so that only a few percent of functions land in the danger zone. Allow per-language overrides later; a 50-line Java method is not the same as 50 lines of Python.
+- **Calibrated in build step 7, and kept.** Across the 50,158 functions of the test repositories, the median function has 6 lines of code and complexity 1; the 99th percentile has 66 lines of code and complexity 13. More than 50 lines of code and complexity over 10 puts 0.7% of all functions in the danger zone (0.0% to 1.7% per repository), well within "only a few percent", and both limits sit near the 98th to 99th percentile, so the zone holds real outliers. Complexity 10 is also McCabe's classic limit. Django alone still gets 181 functions to look at. Lower thresholds were weighed and not chosen:
+
+| Danger zone: more than | All | Python | JavaScript | TypeScript | TSX | Java |
+|---|---|---|---|---|---|---|
+| 50 lines, complexity 10 (default) | 0.7% | 0.5% | 0.4% | 1.4% | 1.1% | 0.0% |
+| 40 lines, complexity 10 | 0.9% | 0.8% | 0.6% | 1.7% | 1.3% | 0.0% |
+| 30 lines, complexity 8 | 1.4% | 1.3% | 1.3% | 2.1% | 2.4% | 0.7% |
+| 25 lines, complexity 7 | 2.0% | 1.7% | 2.1% | 2.8% | 3.1% | 1.5% |
+| 20 lines, complexity 5 | 3.1% | 2.7% | 3.4% | 4.3% | 4.8% | 3.0% |
+
+  TypeScript and TSX have fatter tails (99th percentile 83 and 103 lines of code, against 61 for Python): the first place a per-language override would matter. The only Java project is a small sample app (134 functions), too little to calibrate Java on.
 
 ## 8. Outputs
 
@@ -301,7 +313,7 @@ fat-functions/
 ├── LICENSE                     # Apache-2.0
 ├── NOTICE                      # attribution, must travel with copies
 ├── pyproject.toml              # dev tools only
-├── .gitignore                  # .fat-functions/ .corpus/ .corpus-out/
+├── .gitignore                  # .fat-functions/ .test-repos/ .test-repos-out/
 ├── .gitattributes              # keep vendor/ byte-identical on every OS
 ├── .github/
 │   ├── copilot-instructions.md
@@ -321,13 +333,13 @@ fat-functions/
 │   ├── fixtures/mixed_project/ # provided: small .py .js .ts .java files with hand-checked numbers
 │   ├── fixtures/edge_cases/    # syntax error, empty file, arrow duplicate, non-English names, huge file
 │   └── test_*.py
-├── corpus/
+├── test-repos/
 │   ├── repos.toml              # real repos pinned to exact commits
-│   └── baseline.json           # last accepted corpus results
+│   └── baseline.json           # last accepted results on the test repositories
 ├── tools/
 │   ├── update_vendor.py
-│   ├── fetch_corpus.py
-│   ├── run_corpus.py
+│   ├── fetch_test_repos.py
+│   ├── run_test_repos.py
 │   └── compare.py
 └── extension/                  # stage 3
 ```
@@ -339,7 +351,7 @@ Three levels, fastest first:
 | Level | Checks | When |
 |---|---|---|
 | Unit tests on fixtures | Numbers are exactly right | Every change |
-| Corpus run | No crashes, sensible output, speed on real code | After meaningful changes |
+| Run on the test repositories | No crashes, sensible output, speed on real code | After meaningful changes |
 | Looking at reports | It looks and feels right | When output changes |
 
 **First fixture** is already in `tests/fixtures/mixed_project/` (the exact files lizard was tested on; numbers hand-checked):
@@ -350,13 +362,41 @@ Three levels, fastest first:
 - Java `Order::shipping`: two `case`s, a ternary, an `if` → 5.
 - Python `describe` in `summary.py` (added in build step 3): a docstring, comments and blank lines. It spans lines 4–15 (12 lines) but has 5 lines of code; one `if` → complexity 2. The file has 5 lines of code; its module docstring does not count.
 
-**Corpus**: 8–10 real repositories pinned to commits, cloned into `.corpus/` (gitignored). Suggested mix: `psf/requests` and `pallets/flask` (normal Python), `django/django` (large, stress test), `expressjs/express` (JavaScript), `colinhacks/zod` (TypeScript), `spring-projects/spring-petclinic` (Java), one messy legacy repo, plus private work repos listed in an uncommitted local file.
+**Test repositories** (built in build step 7): 8 real repositories, listed in `test-repos/repos.toml` and each pinned to an exact commit, so a difference in results always comes from the tool. `tools/fetch_test_repos.py` fetches only the pinned commit of each (no history) into `.test-repos/` (gitignored): all 8 in 33 s.
 
-- `run_corpus.py` runs the tool on every repo in parallel, writes reports to `.corpus-out/<repo>/`, an `index.html` linking them, and a summary table (files, functions, danger zone, errors, time).
-- `compare.py` diffs a run against `corpus/baseline.json` and shows only what changed; `--accept` makes the run the new baseline.
-- Tweak loop: change → pytest → `run_corpus --only <a,b>` → compare → look at changed reports → accept.
-- Use the corpus distribution to choose default thresholds.
-- CI: unit tests on every push on three OSes. Corpus run on demand or weekly, with a small subset.
+| Repository | Version | Why |
+|---|---|---|
+| `psf/requests` | v2.32.5 | everyday Python library |
+| `pallets/flask` | 3.1.3 | everyday Python framework |
+| `django/django` | 5.2.9 | large Python project: stress test for size and speed |
+| `expressjs/express` | v5.1.0 | JavaScript |
+| `colinhacks/zod` | v3.24.4 | TypeScript |
+| `excalidraw/excalidraw` | v0.18.1 | TypeScript with React (TSX) |
+| `spring-projects/spring-petclinic` | main at `500158f` (no release tags) | Java |
+| `jquery/jquery` | 1.12.4 | messy legacy JavaScript: long functions, old patterns |
+
+Private work repositories go in `test-repos/repos.local.toml` (gitignored), in the same format; there an entry may give `path` to a checkout on disk instead of `url` and `commit`. Their results go in `test-repos/baseline.local.json` (gitignored), never in `baseline.json`.
+
+- `run_test_repos.py` runs the real command line on every repo, one process each, writes reports to `.test-repos-out/<repo>/` with a `run.json` (commit measured, seconds), an `index.html` linking them, and prints a summary table (files, functions, lines of code, danger zone, errors, warnings, generated files skipped, seconds). It runs 3 repositories at once: on a 12-thread laptop all 8 at once took 257 s, 3 at once 63 s and one at a time 111 s, as the parallel runs slowed each other down.
+- `compare.py` diffs a run against `test-repos/baseline.json` and shows only what changed: summary numbers, errors, warnings, skipped generated files, forgiven functions, and functions added, removed or changed (line range, lines of code, complexity), 10 of each with a count of the rest. It exits with 1 when anything differs. `--accept` makes the run the new baseline. The baseline has one function per line (`"django/apps/config.py::create": [100, 222, 82, 28]`), so an accepted change is a readable git diff: 3.8 MB and 50,255 lines for the 8 repositories.
+- Tweak loop: change → pytest → `run_test_repos --only <a,b>` → compare → look at changed reports → accept.
+- Use the distribution on the test repositories to choose default thresholds (section 7).
+- CI: unit tests on every push on three OSes. `.github/workflows/test-repos.yml` runs requests, flask, express and zod weekly and on demand (any subset), fails on any difference from the baseline, and uploads the reports.
+
+First results (build step 7, measuring one repository at a time):
+
+| Repository | Files | Functions | Lines of code | Danger zone | Errors | Generated, skipped | Seconds |
+|---|---|---|---|---|---|---|---|
+| requests | 35 | 669 | 7,040 | 3 (0.4%) | 0 | 1 | 2.3 |
+| flask | 85 | 1,409 | 10,241 | 4 (0.3%) | 0 | 0 | 3.2 |
+| django | 2,930 | 31,983 | 391,831 | 181 (0.6%) | 0 | 0 | 53.1 |
+| express | 142 | 3,062 | 15,547 | 2 (0.1%) | 0 | 0 | 7.9 |
+| zod | 174 | 3,117 | 25,740 | 20 (0.6%) | 0 | 0 | 8.2 |
+| excalidraw | 539 | 6,180 | 115,306 | 102 (1.7%) | 0 | 2 | 24.2 |
+| spring-petclinic | 57 | 134 | 2,844 | 0 (0.0%) | 0 | 0 | 2.7 |
+| jquery | 174 | 3,604 | 36,671 | 15 (0.4%) | 1 | 0 | 7.5 |
+
+No warnings and no forgiven functions in any of them. Speed is about 7,000 lines of code a second; Django, the largest, takes under a minute, so no per-file time limit is needed (section 4).
 
 ## 12. Copilot skill (stage 2)
 
@@ -389,6 +429,6 @@ Because Agent Skills is an open standard, the same skill folder also works in Co
 4. `scan.py` with exclusions + tests.
 5. `tree.py` and `score.py` + tests; output `report.json`.
 6. Turn `docs/report-prototype.html` into `templates/report.html`; implement `render.py`.
-7. Corpus tools; run on the corpus; calibrate thresholds; commit the baseline.
+7. Test-repository tools; run on the test repositories; calibrate thresholds; commit the baseline.
 8. `SKILL.md`; try it in Copilot on a real project.
 9. Extension, if wanted.

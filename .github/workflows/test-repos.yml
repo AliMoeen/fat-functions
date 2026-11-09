@@ -1,0 +1,35 @@
+name: Test repositories
+
+# Runs the tool on a few of the test repositories and fails when the results
+# differ from test-repos/baseline.json (docs/DESIGN.md section 11). Weekly, so a
+# change nobody compared does not go unnoticed, and on demand.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Comma-separated repositories"
+        default: "requests,flask,express,zod"
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    env:
+      ONLY: ${{ inputs.only || 'requests,flask,express,zod' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+      - run: python tools/fetch_test_repos.py --only "$ONLY"
+      - run: python tools/run_test_repos.py --only "$ONLY"
+      - run: python tools/compare.py --only "$ONLY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: reports
+          path: .test-repos-out/
