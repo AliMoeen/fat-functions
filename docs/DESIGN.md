@@ -88,7 +88,7 @@ Tested by vendoring lizard into a folder (no pip install) and running it on smal
 
 Known quirks the code must handle:
 
-- **Python and TypeScript methods lose their class name.** Python reports `build`, not `InvoiceBuilder.build`. Java reports `Order::shipping`. Nested Python functions are named `outer.inner`. Functions still group correctly under their file. Class grouping is a later nice-to-have. Two classes with a method of the same name give two functions with the same name in one file, so `measure.py` numbers repeated ids (section 6).
+- **Python and TypeScript methods lose their class name.** Python reports `build`, not `InvoiceBuilder.build`. Java reports `Order::shipping`. Nested Python functions are named `outer.inner`, but two levels down lizard repeats the prefix: `a.a.b.c` for `c` inside `b` inside `a`. Functions still group correctly under their file. Class grouping is a later nice-to-have. Two classes with a method of the same name give two functions with the same name in one file, so `measure.py` numbers repeated ids (section 6).
 - **A callback on the same line as its function shares its line range.** In `const total = (c) => c.items.reduce((s, i) => s + i.price, 0);` lizard reports `total` and, for the inner arrow, `(anonymous)`, both on line 8 to 8. (An earlier reading took this for one arrow function reported twice; a one-line arrow without a callback is reported once.) Counting both would count the line twice, so `measure.py` keeps one function per file + start line + end line: a named one over `(anonymous)`, then the outermost. A callback on its own line has its own range and is kept. lizard counts 0 parameters for arrow callbacks like `(s, i) => …`.
 - **Syntax errors are not reported.** lizard returns no error, and a broken Python file can lose every function, even valid ones after the error.
 - **lizard reads files with the OS default encoding and hides read errors**, and reports a `RecursionError` (for example, thousands of nested braces) only on stderr, returning partial results. So `measure.py` reads each file itself as UTF-8 (BOM allowed, bad bytes replaced, any line endings), and turns anything lizard writes to stderr into an `errors` entry.
@@ -106,6 +106,7 @@ Not yet verified: Windows paths, speed on very large repositories, behaviour whe
 
 - **Runtime needs only Python 3 plus the bundled `vendor/` folder.** No `pip install` for users, no network.
 - lizard, pygments and pathspec ship as the unmodified wheel files (`*.whl`) from `pip download`, committed to `scripts/vendor/`. Python imports pure-Python packages straight from a zip. `codemap/__init__.py` puts each wheel first on `sys.path`, so every importer (`fat_functions.py`, the tests, later the extension) gets the bundled copies, not ones installed elsewhere. One exception: pytest imports its own pygments at startup, so inside a test run pygments comes from the dev environment (it only matters for Erlang). A test checks the real setup in a fresh interpreter.
+- `fat_functions.py` puts its own folder on `sys.path` before importing `codemap`. Python normally does that for a script, but not with `python -I` (or `-P`) or in the embeddable Windows Python, where the import failed in build step 5. A test runs the script with `-I`.
 - Why wheels instead of an unpacked folder (decided in build step 2): 11 files and 2.5 MB in `vendor/` instead of about 500 files and 6.2 MB; a version bump replaces one wheel; the wheels are byte-identical to the ones on PyPI; and Python never writes `__pycache__` into the analyzed project, where the skill may live. The cost is about 0.14 s extra startup per run, because Python cannot cache compiled code inside a zip. Tested on Python 3.9, 3.11 and 3.12 with identical lizard results.
 - The wheel spec discourages importing from wheels in general: skipping installation hides packages from tools that track dependencies for security updates, and code that assumes it was installed (C extensions, files opened via `__file__`) fails in obscure ways. Neither applies here. All three wheels hold only `.py` files (plus pathspec's `py.typed` marker), with no C extensions and no `.data` directory, and `tests/test_vendor.py` checks this on every CI run. Security updates are tracked by hand through `VERSIONS.txt`.
 - `update_vendor.py` uses the developer's pip configuration, so private package feeds work. It resolves for Python 3.9 (every pin must support it), refuses wheels that are not pure Python (they would not run on every OS), and fails if pip downloads anything not pinned.
@@ -123,9 +124,9 @@ Not yet verified: Windows paths, speed on very large repositories, behaviour whe
 |---|---|
 | `scan.py` | Walk the target folder and collect the source files lizard can read (asking `measure.is_supported`). Decides by path only. Skips folders named `.git`, `.venv`, `venv`, `__pycache__`, `site-packages`, `node_modules`, `build`, `dist`, `target` or `.fat-functions` (our own reports) at any depth, `*.min.js`, anything a `.gitignore` in the root or any folder below ignores, and anything matching `--exclude`. Folders it cannot read go in `errors`. |
 | `measure.py` | Read each file once, then decide by content. Files whose first 10 lines say they were generated are skipped and listed (unless `--include-generated`); the rest are run through lizard and converted to records. Files it cannot read, file types lizard does not know, and lizard failures go in an `errors` list, and the run keeps going; never crash on one bad file. Things that limit what could be measured in a file go in `warnings`. |
-| `tree.py` | Build folder → file → function, rolling sizes up so each parent equals the sum of its children. Code at module level that is not in any function becomes a `<module>` block (like WinDirStat's `<Files>`). Nested functions are separate records, and the line that starts a nested function counts in both (outer 5 + inner 3 lines of code in a 7-line file), so `tree.py` must nest or subtract them rather than add them up. |
-| `score.py` | Apply thresholds, assign a status to each function, rank the worst offenders. |
-| `render.py` | Write `report.json` and the HTML report, and print a short summary to stdout. |
+| `tree.py` | Build folder → file → function, rolling sizes up so each parent equals the sum of its children. Code at module level that is not in any function becomes a `<module>` block (like WinDirStat's `<Files>`). Nested functions are separate records, and the line that starts a nested function counts in both (outer 5 + inner 3 lines of code in a 7-line file). `tree.py` lists nested functions next to the outer one in their file and has the outer one give up the start lines of the functions directly inside it (5 − 1 = 4, and 4 + 3 = 7). Checked in build step 5 on two levels of nesting, callbacks and two functions starting on one line: the blocks add up exactly to the file's lines of code. |
+| `score.py` | Assign a status to each function, count the danger zone, rank the worst offenders (section 7). |
+| `render.py` | Write `report.json` and the HTML report, and print a short summary to stdout. Build step 5 wrote `report.json` and the summary; build step 6 adds the HTML. |
 
 `scan.py` follows `.gitignore` files with git's pattern rules (via pathspec), each one for its own folder and below, with two simplifications: a `!pattern` only re-includes what its own file excluded, not what a parent folder's file excluded, and `.git/info/exclude` and the user's global git excludes are not read. All path matching is case-sensitive on every OS, so the same folder gives the same files on Windows, macOS and Linux.
 
@@ -158,8 +159,8 @@ Status by cyclomatic complexity:
 | 11–20 | `soon` | Split soon |
 | 21+ | `now` | Split now |
 
-- **Danger zone**: functions with 50+ lines of code **and** complexity 11+.
-- **Ranking**: worst offenders sorted by `loc × complexity`. Forgiven functions keep their place in the ranking and get their status like any other (section 6).
+- **Danger zone**: functions with **more than 50 lines of code and complexity over 10** (so 51+ and 11+), set with `--max-loc` and `--max-complexity`. "Max" means the highest value that is still fine, as in flake8's `--max-complexity` and lizard's own thresholds. (Until build step 5 this said "50+ lines", which contradicted `--max-loc 50`; the max reading won because it matches those tools.) The thresholds only move the danger zone; the status bands above stay fixed.
+- **Ranking**: worst offenders sorted by `loc × complexity`, ties by `id`, so the order never depends on input order. Forgiven functions keep their place in the ranking and get their status like any other (section 6). `report.json` lists the top 20 as `offenders`; every function is in `tree`.
 - These defaults are placeholders. Calibrate them against the test corpus (section 11) so that only a few percent of functions land in the danger zone. Allow per-language overrides later; a 50-line Java method is not the same as 50 lines of Python.
 
 ## 8. Outputs
@@ -172,13 +173,21 @@ Written into the analyzed project, in `.fat-functions/` (never into the tool's o
 ```json
 {
   "summary": {"files": 14, "functions": 31, "loc": 1645, "danger_zone": 3},
-  "thresholds": {"danger_loc": 50, "danger_complexity": 11},
+  "thresholds": {"max_loc": 50, "max_complexity": 10},
   "offenders": [
     {"id": "services/billing.py::calculate_invoice", "name": "calculate_invoice",
      "file": "services/billing.py", "start_line": 42, "end_line": 253,
-     "loc": 187, "complexity": 34, "forgiven": false, "status": "now"}
+     "loc": 187, "complexity": 34, "params": 3, "language": "python",
+     "forgiven": false, "status": "now"}
   ],
-  "tree": {"name": "<root>", "children": ["..."]},
+  "tree": {"type": "folder", "name": "<root>", "path": "", "value": 1645, "children": [
+    {"type": "folder", "name": "services", "path": "services", "value": 812, "children": [
+      {"type": "file", "name": "billing.py", "path": "services/billing.py",
+       "language": "python", "value": 402, "children": [
+        {"type": "function", "id": "services/billing.py::calculate_invoice",
+         "name": "calculate_invoice", "value": 187, "start_line": 42, "end_line": 253,
+         "loc": 187, "complexity": 34, "params": 3, "forgiven": false, "status": "now"},
+        {"type": "module", "name": "<module>", "value": 15}]}]}]},
   "errors": [{"file": "legacy/old.py", "error": "..."}],
   "warnings": [{"file": "api/client.js", "line": 120,
                 "warning": "lizard stops reading at this \"GENERATED CODE\" comment: ..."}],
@@ -186,11 +195,27 @@ Written into the analyzed project, in `.fat-functions/` (never into the tool's o
 }
 ```
 
+- `summary`: files and functions measured; `loc` is the lines of code on the map (`tree.value`); `danger_zone` counts functions over both thresholds.
+- `thresholds`: the danger-zone maximums used (section 7).
+- `offenders`: the 20 worst functions, worst first, as full records (section 6).
+- `tree` (shape fixed in build step 5): every node has a `type` (`folder`, `file`, `function` or `module`) and a `value`, the lines of code it covers on the map; a folder's or file's value is the sum of its children's. Folders and files carry their `path`, files their `language`. Function nodes carry the record fields except `file` and `language`, which their file node has; their `value` is their own lines (section 6, `tree.py`), their `loc` lizard's count. Folders and files are in path order, functions in source order, `<module>` last and only if there is module-level code.
 - `errors`: files or folders that could not be measured at all.
 - `warnings` (added in build step 4): a file was measured, but something at that line limits what could be measured, so nothing is lost silently. Today the only one is a `GENERATED CODE` comment past the header (section 4).
 - `skipped_generated` (added in build step 4): every file left out because its header says it was generated, with the text that matched, not just a count, so a wrong guess is easy to spot.
 
-stdout: a few lines with totals and the top 5 offenders, so Copilot often does not need to open the JSON. It also gives the number of errors, warnings and skipped generated files when there are any.
+The file is UTF-8 JSON with `\n` line endings and no timestamps or absolute paths, so the same project gives the same bytes on every OS and Python version (checked in build step 5 on 3.9, 3.11 and 3.12). A report folder the tool creates gets a `.gitignore` containing `*`, so reports stay out of git, as pytest and ruff do with their caches; a folder that already existed (`--out docs/`) is left alone. Size: about 5 MB for 13,000 functions (the dev environment's `site-packages`); watch this when the HTML embeds the data (build step 6).
+
+stdout: a few lines with totals, the danger zone and the top 5 offenders, so Copilot often does not need to open the JSON, and the number of errors, warnings and skipped generated files when there are any. For example:
+
+```text
+Fat Functions: 5 files, 7 functions, 44 lines of code.
+Danger zone (more than 50 lines of code and complexity over 10): 0 functions.
+Worst offenders (ranked by lines of code times complexity):
+  1. build: 10 lines of code, complexity 5, Simple (billing.py:2)
+Report: /path/to/project/.fat-functions/report.json
+```
+
+Only names from the code can be non-ASCII: the tool's own words avoid `·` and `×`, because whoever reads the output (a terminal, Copilot) may decode it with a different code page than Python wrote it in, as PowerShell did in build step 5. Characters the console cannot show are replaced instead of crashing the run.
 
 ### Command line
 
@@ -199,8 +224,12 @@ python fat_functions.py [path] --out .fat-functions/ --exclude tests migrations
                          --max-loc 50 --max-complexity 10 --include-generated --no-open
 ```
 
+- `path` defaults to the current folder; a path that is not a folder exits with code 2.
+- `--out` defaults to `<path>/.fat-functions/`.
 - `--exclude` takes `.gitignore`-style patterns relative to the analyzed root: `tests` skips every file or folder named `tests`, `src/old/` one folder.
+- `--max-loc` and `--max-complexity` set the danger zone (section 7).
 - `--include-generated` measures generated files instead of skipping them (added in build step 4).
+- `--no-open` comes with the HTML report in build step 6; the other options work since build step 5.
 
 ## 9. The report page
 
