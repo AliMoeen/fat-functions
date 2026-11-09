@@ -43,7 +43,7 @@ Before publishing, confirm the name is free on the VS Code Marketplace (name and
 
 ## License
 
-**Apache License 2.0**, with a `NOTICE` file crediting Ali Moeen. Chosen over MIT because redistributors must carry the NOTICE file, so credit travels with every copy. Compatible with the bundled code: ECharts is Apache-2.0, lizard is MIT. Keep each vendored project's license file in `vendor/`. The README politely asks users to mention or link the project.
+**Apache License 2.0**, with a `NOTICE` file crediting Ali Moeen. Chosen over MIT because redistributors must carry the NOTICE file, so credit travels with every copy. Compatible with the bundled code: ECharts is Apache-2.0, lizard is MIT, pygments is BSD-2-Clause, pathspec is MPL-2.0. Keep each vendored project's license file in `vendor/` (see section 5). The README politely asks users to mention or link the project.
 
 ## 2. Core principle
 
@@ -83,21 +83,27 @@ Upgrade only when a real problem appears:
 
 Tested by vendoring lizard into a folder (no pip install) and running it on small Python, JS, TS and Java files. Vendoring works; all four languages parsed with correct line ranges; complexity numbers were hand-checked and correct.
 
+**Vendored version is 1.24.3, not 1.25.0.** 1.25.0 was not yet on the package feed used to build `vendor/` (build step 2), and 1.24.3 is 314 commits older. Re-check the quirks below against 1.24.3 in build step 3. Moving to a newer lizard later is a pin change in `VERSIONS.txt`.
+
 Known quirks the code must handle:
 
 - **Python and TypeScript methods lose their class name.** Python reports `build`, not `InvoiceBuilder.build`. Java reports `Order::shipping`. Functions still group correctly under their file. Class grouping is a later nice-to-have.
 - **JavaScript arrow functions can appear twice.** `const total = (c) => …` is reported both as `total` and `(anonymous)` with the same file and line range. Deduplicate records with identical file + start line + end line, keeping the named one.
-- **Bundle size is about 6.2 MB.** lizard 1.25.0 pulls in `pygments` (most of the size) and `pathspec`. All pure Python, so bundling works on every OS.
+- **Bundle size is about 6.2 MB.** lizard pulls in `pygments` (most of the size) and `pathspec`. All pure Python, so bundling works on every OS. Kept as wheels (section 5), the whole `vendor/` folder, ECharts included, is 2.5 MB.
 
 Not yet verified: Windows paths, speed on very large repositories, behaviour when Python is missing (extension stage).
 
 ## 5. Dependencies and vendoring
 
 - **Runtime needs only Python 3 plus the bundled `vendor/` folder.** No `pip install` for users, no network.
-- lizard, pygments and pathspec are installed into `scripts/vendor/` with `pip install --target`. `fat_functions.py` puts that folder first on `sys.path`.
-- ECharts (`echarts.min.js`) is downloaded once into `scripts/vendor/` and pasted into the generated HTML, so reports work offline, on locked-down networks, and as a single file that can be emailed.
-- Keep each bundled project's license file. lizard is MIT, ECharts is Apache-2.0.
-- Pinned versions live in `scripts/vendor/VERSIONS.txt`. `tools/update_vendor.py` re-creates the folder from those pins.
+- lizard, pygments and pathspec ship as the unmodified wheel files (`*.whl`) from `pip download`, committed to `scripts/vendor/`. `fat_functions.py` puts each wheel first on `sys.path`; Python imports pure-Python packages straight from a zip.
+- Why wheels instead of an unpacked folder (decided in build step 2): 11 files and 2.5 MB in `vendor/` instead of about 500 files and 6.2 MB; a version bump replaces one wheel; the wheels are byte-identical to the ones on PyPI; and Python never writes `__pycache__` into the analyzed project, where the skill may live. The cost is about 0.14 s extra startup per run, because Python cannot cache compiled code inside a zip. Tested on Python 3.9, 3.11 and 3.12 with identical lizard results.
+- The wheel spec discourages importing from wheels in general: skipping installation hides packages from tools that track dependencies for security updates, and code that assumes it was installed (C extensions, files opened via `__file__`) fails in obscure ways. Neither applies here. All three wheels hold only `.py` files (plus pathspec's `py.typed` marker), with no C extensions and no `.data` directory, and `tests/test_vendor.py` checks this on every CI run. Security updates are tracked by hand through `VERSIONS.txt`.
+- `update_vendor.py` uses the developer's pip configuration, so private package feeds work. It resolves for Python 3.9 (every pin must support it), refuses wheels that are not pure Python (they would not run on every OS), and fails if pip downloads anything not pinned.
+- `.gitattributes` marks the third-party files in `vendor/` as `-text`, so git never changes their line endings and every checkout stays byte-identical to upstream.
+- ECharts (`echarts.min.js`) is downloaded once into `scripts/vendor/` and pasted into the generated HTML, so reports work offline, on locked-down networks, and as a single file that can be emailed. It comes from jsDelivr's copy of the npm package, because some corporate networks block the npm registry. Its `LICENSE` and `NOTICE` are saved next to it as `echarts-LICENSE.txt` and `echarts-NOTICE.txt`.
+- Keep each bundled project's license file as a plain file in `vendor/`, so people and license scanners see it without unzipping anything. `update_vendor.py` copies each wheel's `*.dist-info/licenses/` files out next to it (`lizard-LICENSE.txt`, `pathspec-LICENSE.txt`, `pygments-LICENSE.txt`, `pygments-AUTHORS.txt`), and a test checks they still match the copies inside the wheels. pygments' `AUTHORS` is kept because its license names the copyright holders by pointing to it. lizard is MIT (its `lizard.py` also carries an Apache-2.0 header; both are compatible), pygments is BSD-2-Clause, pathspec is MPL-2.0 (ship its files unmodified), ECharts is Apache-2.0 (its NOTICE travels with every copy).
+- Pinned versions live in `scripts/vendor/VERSIONS.txt`. `tools/update_vendor.py` re-creates the folder from those pins, and `tests/test_vendor.py` checks the folder still matches them.
 - Dev tools (pytest, ruff) are dev dependencies in `pyproject.toml` and never ship.
 
 ## 6. Responsibilities of the engine
@@ -226,6 +232,7 @@ fat-functions/
 ├── NOTICE                      # attribution, must travel with copies
 ├── pyproject.toml              # dev tools only
 ├── .gitignore                  # .fat-functions/ .corpus/ .corpus-out/
+├── .gitattributes              # keep vendor/ byte-identical on every OS
 ├── .github/
 │   ├── copilot-instructions.md
 │   └── workflows/ci.yml        # tests on Windows, macOS, Linux
@@ -239,7 +246,7 @@ fat-functions/
 │           ├── fat_functions.py
 │           ├── codemap/        # scan, measure, tree, score, render
 │           ├── templates/report.html
-│           └── vendor/         # lizard, pygments, pathspec, echarts + licenses + VERSIONS.txt
+│           └── vendor/         # lizard, pygments, pathspec wheels; echarts + licenses; VERSIONS.txt
 ├── tests/
 │   ├── fixtures/mixed_project/ # provided: small .py .js .ts .java files with hand-checked numbers
 │   ├── fixtures/edge_cases/    # syntax error, empty file, arrow duplicate, non-English names, huge file
@@ -306,7 +313,7 @@ Because Agent Skills is an open standard, the same skill folder also works in Co
 
 1. Repo setup (LICENSE, Python .gitignore and README already exist; extend, don't replace), dev virtual environment, pytest, ruff, CI skeleton.
 2. `tools/update_vendor.py`; vendor lizard and ECharts.
-3. `measure.py` + tests against `fixtures/mixed_project`, including arrow-function dedupe.
+3. `measure.py` + tests against `fixtures/mixed_project`, including arrow-function dedupe. Re-check the section 4 lizard quirks on the vendored 1.24.3.
 4. `scan.py` with exclusions + tests.
 5. `tree.py` and `score.py` + tests; output `report.json`.
 6. Turn `docs/report-prototype.html` into `templates/report.html`; implement `render.py`.

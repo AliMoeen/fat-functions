@@ -1,0 +1,28 @@
+# Dev tools only. The shipped tool needs nothing but Python 3.9+ and the
+# bundled skill/fat-functions/scripts/vendor/ folder (see docs/DESIGN.md).
+#
+# Install into a virtual environment (pip 25.1 or newer):
+#     python -m pip install --group dev
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff==0.17.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tools"]
+
+[tool.ruff]
+target-version = "py39"
+extend-exclude = [
+    "skill/fat-functions/scripts/vendor",
+    # Hand-checked sample code: reformatting would change the expected numbers.
+    "tests/fixtures",
+]
+# Keep the excludes even when an editor passes a file path directly.
+force-exclude = true
+
+[tool.ruff.lint]
+extend-select = ["B", "I", "UP"]

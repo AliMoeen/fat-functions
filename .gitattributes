@@ -1,0 +1,4 @@
+# Bundled third-party files must stay byte-identical to upstream on every OS,
+# so git never converts their line endings. VERSIONS.txt is ours: normal text.
+skill/fat-functions/scripts/vendor/** -text
+skill/fat-functions/scripts/vendor/VERSIONS.txt text

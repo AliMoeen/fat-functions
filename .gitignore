@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Fat Functions
+.fat-functions/
+.corpus/
+.corpus-out/
