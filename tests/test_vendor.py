@@ -6,6 +6,7 @@ import sys
 import zipfile
 
 import pytest
+
 from update_vendor import (
     ECHARTS,
     ECHARTS_FILES,

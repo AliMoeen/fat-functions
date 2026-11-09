@@ -76,19 +76,25 @@ Upgrade only when a real problem appears:
 | If this happens | Then |
 |---|---|
 | lizard misreads files we care about | Swap that one language to tree-sitter |
-| We want docstrings excluded from Python line counts | Add `ast` for Python only |
 | Neither | Keep it simple |
 
-### Verified lizard behaviour (tested with lizard 1.25.0)
+Excluding docstrings from Python line counts was once on this list. It is not needed: `loc` is lizard's code-line count (section 6), which already skips docstrings, comments and blank lines (checked in build step 3).
+
+### Verified lizard behaviour (tested with lizard 1.25.0, re-checked on 1.24.3)
 
 Tested by vendoring lizard into a folder (no pip install) and running it on small Python, JS, TS and Java files. Vendoring works; all four languages parsed with correct line ranges; complexity numbers were hand-checked and correct.
 
-**Vendored version is 1.24.3, not 1.25.0.** 1.25.0 was not yet on the package feed used to build `vendor/` (build step 2), and 1.24.3 is 314 commits older. Re-check the quirks below against 1.24.3 in build step 3. Moving to a newer lizard later is a pin change in `VERSIONS.txt`.
+**Vendored version is 1.24.3, not 1.25.0.** 1.25.0 was not yet on the package feed used to build `vendor/` (build step 2), and 1.24.3 is 314 commits older. Build step 3 re-checked everything below on 1.24.3, with the same hand-checked numbers. Moving to a newer lizard later is a pin change in `VERSIONS.txt`.
 
 Known quirks the code must handle:
 
-- **Python and TypeScript methods lose their class name.** Python reports `build`, not `InvoiceBuilder.build`. Java reports `Order::shipping`. Functions still group correctly under their file. Class grouping is a later nice-to-have.
-- **JavaScript arrow functions can appear twice.** `const total = (c) => …` is reported both as `total` and `(anonymous)` with the same file and line range. Deduplicate records with identical file + start line + end line, keeping the named one.
+- **Python and TypeScript methods lose their class name.** Python reports `build`, not `InvoiceBuilder.build`. Java reports `Order::shipping`. Nested Python functions are named `outer.inner`. Functions still group correctly under their file. Class grouping is a later nice-to-have. Two classes with a method of the same name give two functions with the same name in one file, so `measure.py` numbers repeated ids (section 6).
+- **A callback on the same line as its function shares its line range.** In `const total = (c) => c.items.reduce((s, i) => s + i.price, 0);` lizard reports `total` and, for the inner arrow, `(anonymous)`, both on line 8 to 8. (An earlier reading took this for one arrow function reported twice; a one-line arrow without a callback is reported once.) Counting both would count the line twice, so `measure.py` keeps one function per file + start line + end line: a named one over `(anonymous)`, then the outermost. A callback on its own line has its own range and is kept. lizard counts 0 parameters for arrow callbacks like `(s, i) => …`.
+- **Syntax errors are not reported.** lizard returns no error, and a broken Python file can lose every function, even valid ones after the error.
+- **lizard reads files with the OS default encoding and hides read errors**, and reports a `RecursionError` (for example, thousands of nested braces) only on stderr, returning partial results. So `measure.py` reads each file itself as UTF-8 (BOM allowed, bad bytes replaced, any line endings), and turns anything lizard writes to stderr into an `errors` entry.
+- **A comment containing `GENERATED CODE` makes lizard stop reading the file.** Every function after it is lost, and in Python the one just before it too; a generated-file header gives zero functions. `#lizard forgive` comments hide a function (in Python, the one before the comment). `scan.py` should skip generated files on purpose, so this never happens silently (build step 4).
+- **Deeply nested functions are slow.** Time doubles with each level of nested Python functions: 0.09 s at 25 levels, so a minute or more past 35. Real code does not nest that deep; add a per-file time limit only if the corpus shows a need.
+- **Language names come from lizard's readers:** `python`, `javascript`, `typescript`, `java`; `.jsx` files are `tsx` and `.c` files are `cpp`.
 - **Bundle size is about 6.2 MB.** lizard pulls in `pygments` (most of the size) and `pathspec`. All pure Python, so bundling works on every OS. Kept as wheels (section 5), the whole `vendor/` folder, ECharts included, is 2.5 MB.
 
 Not yet verified: Windows paths, speed on very large repositories, behaviour when Python is missing (extension stage).
@@ -96,7 +102,7 @@ Not yet verified: Windows paths, speed on very large repositories, behaviour whe
 ## 5. Dependencies and vendoring
 
 - **Runtime needs only Python 3 plus the bundled `vendor/` folder.** No `pip install` for users, no network.
-- lizard, pygments and pathspec ship as the unmodified wheel files (`*.whl`) from `pip download`, committed to `scripts/vendor/`. `fat_functions.py` puts each wheel first on `sys.path`; Python imports pure-Python packages straight from a zip.
+- lizard, pygments and pathspec ship as the unmodified wheel files (`*.whl`) from `pip download`, committed to `scripts/vendor/`. Python imports pure-Python packages straight from a zip. `codemap/__init__.py` puts each wheel first on `sys.path`, so every importer (`fat_functions.py`, the tests, later the extension) gets the bundled copies, not ones installed elsewhere. One exception: pytest imports its own pygments at startup, so inside a test run pygments comes from the dev environment (it only matters for Erlang). A test checks the real setup in a fresh interpreter.
 - Why wheels instead of an unpacked folder (decided in build step 2): 11 files and 2.5 MB in `vendor/` instead of about 500 files and 6.2 MB; a version bump replaces one wheel; the wheels are byte-identical to the ones on PyPI; and Python never writes `__pycache__` into the analyzed project, where the skill may live. The cost is about 0.14 s extra startup per run, because Python cannot cache compiled code inside a zip. Tested on Python 3.9, 3.11 and 3.12 with identical lizard results.
 - The wheel spec discourages importing from wheels in general: skipping installation hides packages from tools that track dependencies for security updates, and code that assumes it was installed (C extensions, files opened via `__file__`) fails in obscure ways. Neither applies here. All three wheels hold only `.py` files (plus pathspec's `py.typed` marker), with no C extensions and no `.data` directory, and `tests/test_vendor.py` checks this on every CI run. Security updates are tracked by hand through `VERSIONS.txt`.
 - `update_vendor.py` uses the developer's pip configuration, so private package feeds work. It resolves for Python 3.9 (every pin must support it), refuses wheels that are not pure Python (they would not run on every OS), and fails if pip downloads anything not pinned.
@@ -113,8 +119,8 @@ Not yet verified: Windows paths, speed on very large repositories, behaviour whe
 | Module | Job |
 |---|---|
 | `scan.py` | Walk the target folder and collect source files. Skip `.git`, `.venv`, `venv`, `__pycache__`, `site-packages`, `node_modules`, `build`, `dist`, `target`, `*.min.js`, generated code, and anything in `.gitignore`. Exclusions are configurable. |
-| `measure.py` | Run lizard on each file and convert results to records. Record files that fail to parse in an `errors` list and keep going; never crash on one bad file. |
-| `tree.py` | Build folder → file → function, rolling sizes up so each parent equals the sum of its children. Code at module level that is not in any function becomes a `<module>` block (like WinDirStat's `<Files>`). |
+| `measure.py` | Run lizard on each file and convert results to records. Files it cannot read, file types lizard does not know, and lizard failures go in an `errors` list, and the run keeps going; never crash on one bad file. |
+| `tree.py` | Build folder → file → function, rolling sizes up so each parent equals the sum of its children. Code at module level that is not in any function becomes a `<module>` block (like WinDirStat's `<Files>`). Nested functions are separate records, and the line that starts a nested function counts in both (outer 5 + inner 3 lines of code in a 7-line file), so `tree.py` must nest or subtract them rather than add them up. |
 | `score.py` | Apply thresholds, assign a status to each function, rank the worst offenders. |
 | `render.py` | Write `report.json` and the HTML report, and print a short summary to stdout. |
 
@@ -126,7 +132,11 @@ What the engine never does: call an AI, suggest refactors, modify the analyzed c
 {id, name, file, start_line, end_line, loc, complexity, params, language, status}
 ```
 
-`id` is `"<relative file path>::<function name>"`. `file` paths are relative to the analyzed root and always use `/`.
+`id` is `"<relative file path>::<function name>"`. When a file has several functions with the same name (methods of different classes, anonymous callbacks), the second and later get `#2`, `#3`… in source order, so ids are unique and the first one's id does not change when another is added. `file` paths are relative to the analyzed root and always use `/`.
+
+`loc` is **lines of code**: lizard's code-line count, without blank lines, comments or docstrings. It is not `end_line - start_line + 1`, which counts every line the function spans. Chosen in build step 3 because comments and spacing should not make a function look fatter, and it is what lizard and most metrics tools mean by lines of code. `status` is filled in by `score.py`.
+
+`measure.py` also returns each file's language and code-line count (the `<module>` block in `tree.py` is what is left after the functions), and an `errors` list. Results are sorted by file path, then by start line.
 
 ## 7. Scoring
 
@@ -157,7 +167,7 @@ Written into the analyzed project, in `.fat-functions/` (never into the tool's o
   "offenders": [
     {"id": "services/billing.py::calculate_invoice", "name": "calculate_invoice",
      "file": "services/billing.py", "start_line": 42, "end_line": 253,
-     "loc": 212, "complexity": 34, "status": "now"}
+     "loc": 187, "complexity": 34, "status": "now"}
   ],
   "tree": {"name": "<root>", "children": ["..."]},
   "errors": [{"file": "legacy/old.py", "error": "..."}]
@@ -190,7 +200,7 @@ Visual rules (these are what make it look polished, unlike the classic D3 Flare 
 - Calm neutral blocks; color reserved for complexity, with red only for real problems.
 - Labels only where they fit; details on hover.
 - Clear folder and file headers with totals; gaps and soft corners between blocks instead of thin lines.
-- Real units everywhere ("212 lines · complexity 34"), never bare numbers.
+- Real units everywhere ("187 lines of code · complexity 34"), never bare numbers. Where there is room (tooltips, details), show the span too: "187 lines of code (lines 42–253)", so a function that is long mostly because of comments is easy to spot. Keep the span out of the ranked-list rows, where numbers must never be cut off.
 - Light and dark mode.
 
 Library: **ECharts 5.5.0**. Chosen over D3 (more polish possible, but zoom, breadcrumbs and transitions must be hand-built) and Plotly (large and dated-looking). ECharts gives built-in drill-down, breadcrumbs, tooltips and good defaults for little code.
@@ -275,9 +285,10 @@ Three levels, fastest first:
 **First fixture** is already in `tests/fixtures/mixed_project/` (the exact files lizard was tested on; numbers hand-checked):
 
 - Python `InvoiceBuilder.build`: a `for`, an `if` with `and`, an `elif` → complexity 5. `round_money` → 1.
-- JavaScript `applyDiscount`: `if`, `for`, `if` with `||` → 5. Arrow function `total` → 1, reported twice by lizard (dedupe test).
+- JavaScript `applyDiscount`: `if`, `for`, `if` with `||` → 5. Arrow function `total` → 1; its inner callback `(s, i) => …` on the same line is reported as `(anonymous)` with the same line range and dropped (dedupe test).
 - TypeScript `UserService.validate`: two `if`s, `&&`, `||` → 5.
 - Java `Order::shipping`: two `case`s, a ternary, an `if` → 5.
+- Python `describe` in `summary.py` (added in build step 3): a docstring, comments and blank lines. It spans lines 4–15 (12 lines) but has 5 lines of code; one `if` → complexity 2. The file has 5 lines of code; its module docstring does not count.
 
 **Corpus**: 8–10 real repositories pinned to commits, cloned into `.corpus/` (gitignored). Suggested mix: `psf/requests` and `pallets/flask` (normal Python), `django/django` (large, stress test), `expressjs/express` (JavaScript), `colinhacks/zod` (TypeScript), `spring-projects/spring-petclinic` (Java), one messy legacy repo, plus private work repos listed in an uncommitted local file.
 
@@ -313,7 +324,7 @@ Because Agent Skills is an open standard, the same skill folder also works in Co
 
 1. Repo setup (LICENSE, Python .gitignore and README already exist; extend, don't replace), dev virtual environment, pytest, ruff, CI skeleton.
 2. `tools/update_vendor.py`; vendor lizard and ECharts.
-3. `measure.py` + tests against `fixtures/mixed_project`, including arrow-function dedupe. Re-check the section 4 lizard quirks on the vendored 1.24.3.
+3. `measure.py` + tests against `fixtures/mixed_project`, including arrow-function dedupe.
 4. `scan.py` with exclusions + tests.
 5. `tree.py` and `score.py` + tests; output `report.json`.
 6. Turn `docs/report-prototype.html` into `templates/report.html`; implement `render.py`.

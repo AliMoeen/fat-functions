@@ -12,10 +12,12 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["tools"]
+pythonpath = ["tools", "skill/fat-functions/scripts"]
 
 [tool.ruff]
 target-version = "py39"
+# Where first-party imports live, for import sorting.
+src = ["skill/fat-functions/scripts", "tools"]
 extend-exclude = [
     "skill/fat-functions/scripts/vendor",
     # Hand-checked sample code: reformatting would change the expected numbers.
