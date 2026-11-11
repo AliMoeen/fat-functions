@@ -4,9 +4,15 @@ Find the functions that are too big and too complex, see where they live, and fi
 
 A code health map that runs locally, costs nothing, needs no account, and tells Copilot what to fix. Works with Python, JavaScript, TypeScript, Java and more.
 
-**Status:** in progress. The tool measures a folder and writes an interactive HTML report, `report.json` and a short summary; packaging it as a Copilot skill comes next. See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design.
+**Status:** in progress. The tool measures a folder and writes an interactive HTML report, `report.json` and a short summary, and it works as a Copilot skill. A VS Code extension may come later. See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design.
 
-## Usage
+## Use it in Copilot
+
+Copy the [`skill/fat-functions`](skill/fat-functions) folder into your project's `.github/skills/` to share it with your team, or into `~/.copilot/skills/` to use it in every workspace. Then ask Copilot which functions to split first, or type `/fat-functions`.
+
+Copilot runs the tool, reads the worst functions, and tells you which ones are worth splitting and why. If you ask it to split one, it proposes how and waits for your approval before changing any code, then runs your tests and measures again.
+
+## Use it from the command line
 
 You need Python 3.9 or newer, and nothing else: the tool brings its own copies of what it uses.
 

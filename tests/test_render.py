@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from codemap.render import ECHARTS, TEMPLATE, report_html
+from codemap.render import ECHARTS, TEMPLATE, report_html, summary_text
 
 HOSTILE = '<img src=x onerror="alert(1)"></script><script>alert(2)</script><!--'
 
@@ -116,3 +116,18 @@ def test_page_script_is_valid_javascript(tmp_path):
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_summary_names_the_first_five_of_each_kind_not_measured(tmp_path):
+    report = small_report()
+    report["skipped_generated"] = [
+        {"file": f"gen{n}.py", "marker": "DO NOT EDIT"} for n in range(7)
+    ]
+    lines = summary_text(report, tmp_path / "r.html", tmp_path / "r.json").splitlines()
+    skipped = [line for line in lines if line.startswith("  generated, skipped: ")]
+    assert skipped[0] == '  generated, skipped: gen0.py ("DO NOT EDIT")'
+    assert len(skipped) == 5
+    assert "  ... and 2 more of this kind in the report" in lines
+    assert (
+        "  1. build: 10 lines of code, complexity 5, Simple (billing.py:2-11)" in lines
+    )

@@ -1,12 +1,13 @@
 # Third-party code bundled in this folder, pinned to exact versions.
 # After editing a pin, rebuild the folder with:  python tools/update_vendor.py
 # Every package pip downloads must be pinned here; update_vendor.py checks.
+# This is the only list of bundled code: what each one is for is noted here.
 
 # Python packages, kept as the unmodified wheel files pip downloads. Their
 # license files are copied out next to them as <package>-LICENSE.txt etc.
-lizard==1.24.3      # MIT
-pathspec==1.1.1     # MPL-2.0
-pygments==2.21.0    # BSD-2-Clause
+lizard==1.24.3      # MIT: finds functions, counts lines of code and complexity
+pathspec==1.1.1     # MPL-2.0: reads .gitignore files and --exclude patterns
+pygments==2.21.0    # BSD-2-Clause: lizard uses it to read Erlang only
 
 # JavaScript, downloaded from jsDelivr's copy of the npm package.
-echarts==5.5.0      # Apache-2.0
+echarts==5.5.0      # Apache-2.0: draws the treemap in report.html

@@ -18,8 +18,9 @@ TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / REPORT_HTML
 ECHARTS = VENDOR / "echarts.min.js"
 # Where report.html takes the data and the chart library.
 SLOTS = re.compile(r"/\*\{\{(DATA|ECHARTS)\}\}\*/")
-# Offenders listed in the stdout summary.
+# Offenders listed in the stdout summary, and items of each kind not measured.
 SUMMARY_OFFENDERS = 5
+SUMMARY_ITEMS = 5
 
 
 def build_report(
@@ -110,7 +111,8 @@ def summary_text(report: dict, html_path: Path, json_path: Path) -> str:
         lines.append(
             f"  {rank}. {function['name']}: {function['loc']:,} lines of code, "
             f"complexity {function['complexity']}, {LABELS[function['status']]}"
-            f"{forgiven} ({function['file']}:{function['start_line']})"
+            f"{forgiven} ({function['file']}:{function['start_line']}"
+            f"-{function['end_line']})"
         )
     not_measured = [
         _count(len(report["errors"]), "error"),
@@ -118,10 +120,30 @@ def summary_text(report: dict, html_path: Path, json_path: Path) -> str:
         _count(len(report["skipped_generated"]), "generated file") + " skipped",
     ]
     if report["errors"] or report["warnings"] or report["skipped_generated"]:
-        lines.append(f"Not fully measured: {', '.join(not_measured)}; see the report.")
+        lines.append(f"Not fully measured: {', '.join(not_measured)}:")
+        lines += _first(
+            "error", [f"{e['file']}: {e['error']}" for e in report["errors"]]
+        )
+        lines += _first(
+            "warning",
+            [f"{w['file']}:{w['line']}: {w['warning']}" for w in report["warnings"]],
+        )
+        lines += _first(
+            "generated, skipped",
+            [f'{g["file"]} ("{g["marker"]}")' for g in report["skipped_generated"]],
+        )
     lines.append(f"Report: {html_path}")
     lines.append(f"Data: {json_path}")
     return "\n".join(lines)
+
+
+def _first(kind: str, items: list[str]) -> list[str]:
+    """Name the first few items of one kind, and count the rest."""
+    shown = [f"  {kind}: {item}" for item in items[:SUMMARY_ITEMS]]
+    rest = len(items) - SUMMARY_ITEMS
+    return shown + (
+        [f"  ... and {rest:,} more of this kind in the report"] if rest > 0 else []
+    )
 
 
 def _count(number: int, noun: str) -> str:

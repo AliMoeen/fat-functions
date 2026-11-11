@@ -58,7 +58,7 @@ Before publishing, confirm the name is free on the VS Code Marketplace (name and
 Each stage builds on the previous one and never requires redoing it.
 
 1. **Plain Python tool** (`fat_functions.py`). Useful on its own: `python fat_functions.py <path>` produces the report.
-2. **Copilot skill**: add `SKILL.md` (about 30 lines) next to the script so Copilot can run it, read `report.json`, and propose or perform splits.
+2. **Copilot skill**: add `SKILL.md` (about 120 lines, see section 12) next to the script so Copilot can run it, read `report.json`, and propose or perform splits.
 3. **VS Code extension** (later, only if the tool proves useful): report in a VS Code panel, click a function to open it in the editor, a command and toolbar button, refresh on save, Marketplace distribution.
 
 Not planned: a custom Copilot agent. Revisit only if we want a full measure → refactor → re-measure loop; even then the agent would use the skill, not replace it.
@@ -114,7 +114,7 @@ Not yet verified: behaviour when Python is missing (extension stage). Windows pa
 - `.gitattributes` marks the third-party files in `vendor/` as `-text`, so git never changes their line endings and every checkout stays byte-identical to upstream.
 - ECharts (`echarts.min.js`) is downloaded once into `scripts/vendor/` and pasted into the generated HTML, so reports work offline, on locked-down networks, and as a single file that can be emailed. It comes from jsDelivr's copy of the npm package, because some corporate networks block the npm registry. Its `LICENSE` and `NOTICE` are saved next to it as `echarts-LICENSE.txt` and `echarts-NOTICE.txt`.
 - Keep each bundled project's license file as a plain file in `vendor/`, so people and license scanners see it without unzipping anything. `update_vendor.py` copies each wheel's `*.dist-info/licenses/` files out next to it (`lizard-LICENSE.txt`, `pathspec-LICENSE.txt`, `pygments-LICENSE.txt`, `pygments-AUTHORS.txt`), and a test checks they still match the copies inside the wheels. pygments' `AUTHORS` is kept because its license names the copyright holders by pointing to it. lizard is MIT (its `lizard.py` also carries an Apache-2.0 header; both are compatible), pygments is BSD-2-Clause, pathspec is MPL-2.0 (ship its files unmodified), ECharts is Apache-2.0 (its NOTICE travels with every copy).
-- Pinned versions live in `scripts/vendor/VERSIONS.txt`. `tools/update_vendor.py` re-creates the folder from those pins, and `tests/test_vendor.py` checks the folder still matches them.
+- Pinned versions live in `scripts/vendor/VERSIONS.txt`, with each package's license and what it is used for. It is the only list of bundled code: a separate README in `vendor/` would drift from the pins, fail the test that `vendor/` holds only the expected files, and be deleted by `update_vendor.py` (decided after build step 8). `tools/update_vendor.py` re-creates the folder from those pins, and `tests/test_vendor.py` checks the folder still matches them.
 - Dev tools (pytest, ruff) are dev dependencies in `pyproject.toml` and never ship.
 
 ## 6. Responsibilities of the engine
@@ -217,16 +217,22 @@ Written into the analyzed project, in `.fat-functions/` (never into the tool's o
 
 The file is UTF-8 JSON with `\n` line endings and no timestamps or absolute paths, so the same project gives the same bytes on every OS and Python version (checked in build step 5 on 3.9, 3.11 and 3.12). A report folder the tool creates gets a `.gitignore` containing `*`, so reports stay out of git, as pytest and ruff do with their caches; a folder that already existed (`--out docs/`) is left alone. Size: about 5 MB for 13,000 functions (the dev environment's `site-packages`). `report.html` embeds the same data without indentation (about 3 MB) plus ECharts (about 1 MB), and is the same bytes on every run too (checked on 3.9 and 3.11 in build step 6).
 
-stdout: a few lines with totals, the danger zone and the top 5 offenders, so Copilot often does not need to open the JSON, and the number of errors, warnings and skipped generated files when there are any. For example:
+stdout: a few lines with totals, the danger zone and the top 5 offenders with their file and line range, so Copilot usually does not need to open the JSON. When anything was not fully measured, a `Not fully measured:` line gives the number of errors, warnings and skipped generated files, followed by the first 5 of each kind by name (build step 8: the skill trial showed that counts alone sent Copilot into the JSON). For example:
 
 ```text
 Fat Functions: 5 files, 7 functions, 44 lines of code.
 Danger zone (more than 50 lines of code and complexity over 10): 0 functions.
 Worst offenders (ranked by lines of code times complexity):
-  1. build: 10 lines of code, complexity 5, Simple (billing.py:2)
+  1. build: 10 lines of code, complexity 5, Simple (billing.py:2-11)
+Not fully measured: 1 error, 1 warning, 1 generated file skipped:
+  error: deep.js: lizard: ...
+  warning: late.js:12: lizard stops reading at this "GENERATED CODE" comment: ...
+  generated, skipped: api_pb2.py ("DO NOT EDIT")
 Report: /path/to/project/.fat-functions/report.html
 Data: /path/to/project/.fat-functions/report.json
 ```
+
+More than 5 of a kind end with `  ... and N more of this kind in the report`. A Forgiven function's status reads `Simple, Forgiven`.
 
 Only names from the code can be non-ASCII: the tool's own words avoid `·` and `×`, because whoever reads the output (a terminal, Copilot) may decode it with a different code page than Python wrote it in, as PowerShell did in build step 5. Characters the console cannot show are replaced instead of crashing the run.
 
@@ -402,16 +408,22 @@ No warnings and no forgiven functions in any of them. Speed is about 7,000 lines
 
 Location: `.github/skills/fat-functions/` in a project (shared with the team) or `~/.copilot/skills/fat-functions/` (personal, all workspaces). The repo keeps the source in `skill/fat-functions/`.
 
-`SKILL.md` frontmatter: `name: fat-functions` (must match the folder name: lowercase letters, numbers, hyphens only), and a `description` that says what it does and when to use it, for example "Measure function size and complexity across the workspace and find functions that should be split. Use when asked about large, complex or hard-to-maintain code, or what to refactor first."
+`SKILL.md` frontmatter: `name: fat-functions` (must match the folder name: lowercase letters, numbers, hyphens only), a `description` that says what it does and when to use it, ending with the attribution "- Brought to you by AliMoeen/fat-functions", and an `argument-hint` (`[folder] [--exclude pattern ...]`).
 
-Body tells Copilot to:
+Body (as built in build step 8) tells Copilot to:
 
-1. Run `scripts/fat_functions.py` on the workspace with the bundled Python path and `--no-open`, so no browser pops up.
-2. Read the stdout summary, and `report.json` if needed.
-3. Point the user to `report.html`.
-4. For the top offenders, read only those functions and judge whether each is genuinely a problem (a long but simple lookup table is fine). Functions with `forgiven: true` were accepted on purpose by the team (`#lizard forgive`): mention them, but do not suggest splitting them unless the user asks.
-5. Mention `warnings` and `skipped_generated` when there are any, so the user knows what was not measured.
-6. When asked, propose how to split a function, write the refactor, run the tests, and re-run the tool to confirm the improvement.
+1. Run `scripts/fat_functions.py`, found in the folder that holds `SKILL.md`, on the whole workspace with full paths and `--no-open`, so no browser pops up. Tests are measured unless the user asks otherwise. Commands are given for both bash and PowerShell.
+2. Read the stdout summary, which is enough in most cases, and `report.json` only to look further, reading just the parts it needs.
+3. Unless the user only wants the report, judge the top 5 offenders in ranked order, reading only those functions, with one of three verdicts: fine as is, could be tidied (one clear part to pull out), worth splitting (two or more parts, or nesting three or more levels deep). Functions with `forgiven: true` were accepted on purpose by the team (`#lizard forgive`): mention them, but do not suggest splitting them unless the user asks.
+4. Answer with workspace-relative links, end with where to start, and mention what was not fully measured; rerun with `--include-generated` only if the user asks.
+5. Point the user to `report.html`.
+6. When asked to split a function: read it, what it calls and its tests; propose the seams with line ranges, a code sketch, why behavior stays the same, the expected numbers and the test command, then **stop and wait for approval** before editing. Then make the change, run the tests (asking before installing anything), and rerun the tool with the same arguments to compare.
+
+It also explains the parameters, how lines of code and complexity are counted, the status labels, the `report.json` layout, and common problems.
+
+The section order (Overview, Prerequisites, Quick Start, Parameters Reference, Script Reference, Troubleshooting) and the attribution follow the repository's skill-authoring standard. That standard, together with the judgment and splitting guidance, makes the file about 120 lines (about 2,600 tokens) rather than the 30 first planned, still well under the standard's 5,000-token limit.
+
+**Trial (build step 8).** Two runs followed the skill literally in a sandbox: an installed copy of the skill and a copy of a test repository (requests, then flask), with "which functions should I split first?" and then "split the worst one". Run 1 worked end to end but showed 16 gaps. The fixes: the summary now gives line ranges and names unmeasured files; the skill defines the skill-folder path, three verdicts, the link format, the approval pause, and how to find the test command. Run 2 gave a correct ranked answer, stopped for approval with a complete split proposal, and found the right test command. Its remaining gaps were small wording issues, applied afterwards: setting up a test environment, the tie-breaker between verdicts, and how complexity is counted.
 
 ## 13. Distribution
 

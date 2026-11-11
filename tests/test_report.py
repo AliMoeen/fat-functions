@@ -83,7 +83,7 @@ def test_report_json_for_the_mixed_project(tmp_path, capsys):
         "Fat Functions: 5 files, 7 functions, 44 lines of code.",
         "Danger zone (more than 50 lines of code and complexity over 10): 0 functions.",
         "Worst offenders (ranked by lines of code times complexity):",
-        "  1. build: 10 lines of code, complexity 5, Simple (billing.py:2)",
+        "  1. build: 10 lines of code, complexity 5, Simple (billing.py:2-11)",
     ]
     assert out.splitlines()[-2:] == [
         f"Report: {report_dir / 'report.html'}",
@@ -163,12 +163,16 @@ def test_options_and_everything_that_was_not_measured(tmp_path, capsys):
     ]
     # def, two ifs, two additions and return: 6 lines of code; the comment is not.
     assert (
-        "  1. fat: 6 lines of code, complexity 3, Simple, Forgiven (jobs.py:1)" in out
+        "  1. fat: 6 lines of code, complexity 3, Simple, Forgiven (jobs.py:1-7)" in out
     )
-    assert (
-        "Not fully measured: 1 error, 1 warning, 1 generated file skipped; "
-        "see the report." in out
+    lines = out.splitlines()
+    start = lines.index(
+        "Not fully measured: 1 error, 1 warning, 1 generated file skipped:"
     )
+    assert lines[start + 1].startswith("  error: deep.js: lizard: ")
+    assert lines[start + 2].startswith("  warning: late.js:12: lizard stops reading")
+    assert lines[start + 3] == '  generated, skipped: api_pb2.py ("DO NOT EDIT")'
+    assert lines[start + 4].startswith("Report: ")
 
     run(capsys, project, "--out", out_dir, "--include-generated")
     report = json.loads((out_dir / "report.json").read_text(encoding="utf-8"))
